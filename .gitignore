@@ -1,0 +1,34 @@
+# Environment
+.env
+.env.local
+
+# Dependencies
+node_modules/
+
+# Workspace files (runtime)
+workspace/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code sessions
+.claude/
+
+# Local database
+data/
+
+# Credentials (API keys, service accounts)
+credentials/
+
+# Activity logs and conversation history (runtime generated)
+logs/activity/
+logs/history/
