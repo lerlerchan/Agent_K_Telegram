@@ -1,5 +1,14 @@
 require('dotenv').config();
 
+// Validate required env vars
+const REQUIRED_ENV = ['TELEGRAM_BOT_TOKEN'];
+for (const key of REQUIRED_ENV) {
+  if (!process.env[key]) {
+    console.error(`Missing required env var: ${key}. Copy .env.example to .env and configure.`);
+    process.exit(1);
+  }
+}
+
 const { Telegraf } = require('telegraf');
 const { runClaude } = require('./claude-runner');
 const { getSession, saveSession, logMessage } = require('./database');

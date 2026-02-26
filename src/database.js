@@ -58,4 +58,7 @@ const logMessage = (userId, userMsg, botResp) => {
   } catch (e) { /* ignore logging errors */ }
 };
 
+// Initialize DB eagerly at startup (avoid race conditions from concurrent handlers)
+getDb();
+
 module.exports = { getSession, saveSession, logMessage };

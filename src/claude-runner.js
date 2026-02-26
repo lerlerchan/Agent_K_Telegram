@@ -14,7 +14,7 @@ const MCP_SERVERS = {
   'chrome-devtools': {
     keywords: ['devtools', 'debug page', 'inspect', 'performance trace'],
     config: {
-      command: '/tmp/node-v20.19.0-darwin-arm64/bin/npx',
+      command: 'npx',
       args: ['chrome-devtools-mcp', '--headless']
     }
   },

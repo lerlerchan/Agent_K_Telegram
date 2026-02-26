@@ -46,8 +46,12 @@ COPY package*.json ./
 # Install dependencies
 RUN npm install --production
 
-# Copy source code
+# Copy source code and skills
 COPY src/ ./src/
+COPY skills/ ./skills/
+
+# Symlink skills into Claude's expected location
+RUN ln -s /app/skills /app/.claude/skills
 
 # Set environment
 ENV NODE_ENV=production
