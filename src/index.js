@@ -268,8 +268,8 @@ bot.catch((err, ctx) => ctx.reply('An error occurred. Please try again.'));
       }, 2000);
     });
   } else {
+    console.log(`🤖 Starting Agent K in polling mode | Workspace: ${process.env.WORKSPACE_DIR}`);
     await bot.launch();
-    console.log(`🤖 Polling mode | Workspace: ${process.env.WORKSPACE_DIR}`);
   }
 })();
 
