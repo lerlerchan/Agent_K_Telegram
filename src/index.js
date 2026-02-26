@@ -87,8 +87,9 @@ bot.use(async (ctx, next) => {
   const chatId = ctx.chat?.id;
   const chatType = ctx.chat?.type;
 
-  // Only respond in allowed chats (default: SuperGroup -5125835942)
-  const allowedChats = (process.env.ALLOWED_CHAT_IDS || '-5125835942').split(',').map(id => id.trim()).filter(Boolean);
+  // Only respond in allowed chats (from ALLOWED_CHAT_IDS env var)
+  const allowedChats = (process.env.ALLOWED_CHAT_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
+  if (allowedChats.length === 0) return next(); // no restriction if unset
   if (!allowedChats.includes(String(chatId))) {
     console.log(`[${new Date().toLocaleTimeString()}] ⛔ Ignored chat ${chatId} (${chatType}) from ${ctx.from?.username || ctx.from?.id}`);
     return;
