@@ -1,6 +1,8 @@
 const isUserAllowed = (userId) => {
   const ids = (process.env.ALLOWED_TELEGRAM_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
-  return ids.length > 0 && ids.includes(userId);
+  // If no IDs configured, allow everyone
+  if (ids.length === 0) return true;
+  return ids.includes(userId);
 };
 
 const splitMessage = (msg, max = 4000) => {

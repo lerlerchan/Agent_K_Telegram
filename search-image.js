@@ -5,7 +5,7 @@ const path = require('path');
 async function searchImage() {
   console.log('Launching browser...');
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
+  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 
   console.log('Searching for Johor Bahru CIQ images...');
 

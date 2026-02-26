@@ -9,11 +9,18 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 
-const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
+const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN, {
+  telegram: {
+    apiRoot: 'https://api.telegram.org',
+    agent: new (require('https').Agent)({ keepAlive: true, timeout: 120000 }),
+    webhookReply: false,
+  },
+  handlerTimeout: 600_000, // 10 min for long Claude responses
+});
 const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'];
 
 // Track users currently being processed to prevent duplicate spawns
-const processingUsers = new Map(); // userId -> { startTime, messageId }
+const processingUsers = new Map(); // userId -> { startTime, messageId, abort }
 
 // Helper: Resolve file path relative to workspace
 const resolvePath = (filePath) => {
@@ -75,13 +82,40 @@ const sendResponse = async (telegram, chatId, response, userId) => {
   }
 };
 
-// Middleware: Auth check
+// Middleware: Only respond in allowed chats. Ignore everything else.
 bot.use(async (ctx, next) => {
-  const userId = ctx.from?.id?.toString();
-  if (!userId || !isUserAllowed(userId)) {
-    return ctx.reply('Unauthorized. Contact the bot owner for access.');
+  const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type;
+
+  // Only respond in allowed chats (default: SuperGroup -5125835942)
+  const allowedChats = (process.env.ALLOWED_CHAT_IDS || '-5125835942').split(',').map(id => id.trim()).filter(Boolean);
+  if (!allowedChats.includes(String(chatId))) {
+    console.log(`[${new Date().toLocaleTimeString()}] ⛔ Ignored chat ${chatId} (${chatType}) from ${ctx.from?.username || ctx.from?.id}`);
+    return;
   }
-  return next();
+
+  // In private/DM chats — process all messages directly (no mention needed)
+  if (chatType === 'private') return next();
+
+  // In groups/supergroups, only respond if bot is mentioned or replied to
+  if (chatType === 'group' || chatType === 'supergroup') {
+    const text = ctx.message?.text || ctx.message?.caption || '';
+    const botInfo = await ctx.telegram.getMe();
+    const botUsername = botInfo.username;
+
+    const isMentioned = text.includes(`@${botUsername}`);
+    const isReplyToBot = ctx.message?.reply_to_message?.from?.id === botInfo.id;
+
+    if (!isMentioned && !isReplyToBot) return;
+
+    console.log(`[${new Date().toLocaleTimeString()}] 📩 ${ctx.from?.username || ctx.from?.id}: ${(ctx.message?.text || ctx.message?.caption || '').slice(0, 80)}`);
+
+    // Strip the @botusername from the message before processing
+    if (ctx.message?.text) {
+      ctx.message.text = ctx.message.text.replace(new RegExp(`@${botUsername}`, 'g'), '').trim();
+    }
+    return next();
+  }
 });
 
 // Commands
@@ -90,6 +124,10 @@ bot.start((ctx) => ctx.reply(
   `Commands:\n/new - New conversation\n/status - Bot status\n/test - Test CLI\n` +
   `/cancel - Cancel current request\n/cd <path> - Change workspace\n/sendfile <name> - Send file\n\nJust send a message!`
 ));
+
+bot.command('chatid', (ctx) => {
+  ctx.reply(`Chat ID: ${ctx.chat.id}`);
+});
 
 bot.command('new', async (ctx) => {
   await saveSession(ctx.from.id.toString(), null);
@@ -125,6 +163,8 @@ bot.command('test', (ctx) => {
 bot.command('cancel', async (ctx) => {
   const userId = ctx.from.id.toString();
   if (processingUsers.has(userId)) {
+    const info = processingUsers.get(userId);
+    if (info.abort) info.abort.abort(); // kill the Claude process
     processingUsers.delete(userId);
     ctx.reply('🛑 Request cancelled. You can send a new message now.');
   } else {
@@ -163,7 +203,7 @@ bot.on('text', async (ctx) => {
     const info = processingUsers.get(userId);
     const elapsed = Math.round((Date.now() - info.startTime) / 1000);
     // Auto-clear stale locks after 5 minutes
-    if (elapsed > 300) {
+    if (elapsed > 1800) {
       processingUsers.delete(userId);
       await ctx.reply('Previous request timed out. Processing your new message...');
     } else {
@@ -172,22 +212,52 @@ bot.on('text', async (ctx) => {
     }
   }
 
+  console.log(`[${new Date().toLocaleTimeString()}] ⚙️  Processing for ${ctx.from?.username || userId}...`);
   const msg = await ctx.reply('🤔 Processing...');
-  processingUsers.set(userId, { startTime: Date.now(), messageId: msg.message_id });
+  const abort = new AbortController();
+  let lastStatus = 'Thinking...';
+  processingUsers.set(userId, { startTime: Date.now(), messageId: msg.message_id, abort });
+
+  const onProgress = (text) => {
+    // Capture short status from stderr (trim to 50 chars)
+    const line = text.split('\n').pop().trim();
+    if (line) lastStatus = line.slice(0, 50);
+  };
+
+  // Progress: update message with elapsed time + status every 30s
+  const progressInterval = setInterval(async () => {
+    const info = processingUsers.get(userId);
+    if (!info) return clearInterval(progressInterval);
+    const elapsed = Math.round((Date.now() - info.startTime) / 1000);
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    await ctx.telegram.editMessageText(chatId, msg.message_id, null,
+      `🤔 ${lastStatus} (${mins}m ${secs}s)\n/cancel to abort`
+    ).catch(() => {});
+  }, 30000);
 
   setImmediate(async () => {
+    const startTime = Date.now();
     try {
       const sessionId = await getSession(userId);
-      const result = await runClaude(ctx.message.text, sessionId);
+      const result = await runClaude(ctx.message.text, sessionId, { onProgress, signal: abort.signal });
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log(`[${new Date().toLocaleTimeString()}] ✅ Reply to ${ctx.from?.username || userId} (${elapsed}s, ${result.response.length} chars)`);
 
       if (result.sessionId) await saveSession(userId, result.sessionId);
       await logMessage(userId, ctx.message.text, result.response);
       await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
       await sendResponse(ctx.telegram, chatId, result.response, userId);
     } catch (e) {
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log(`[${new Date().toLocaleTimeString()}] ❌ Error for ${ctx.from?.username || userId} (${elapsed}s): ${e.message}`);
       await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
-      await ctx.telegram.sendMessage(chatId, `❌ Error: ${e.message}`);
+      if (e.message !== 'Request cancelled') {
+        await ctx.telegram.sendMessage(chatId, `❌ Error: ${e.message}`);
+      }
     } finally {
+      clearInterval(progressInterval);
       processingUsers.delete(userId);
     }
   });
@@ -203,7 +273,7 @@ const handleMedia = async (ctx, getFile, prompt) => {
     const info = processingUsers.get(userId);
     const elapsed = Math.round((Date.now() - info.startTime) / 1000);
     // Auto-clear stale locks after 5 minutes
-    if (elapsed > 300) {
+    if (elapsed > 1800) {
       processingUsers.delete(userId);
       await ctx.reply('Previous request timed out. Processing your new message...');
     } else {
@@ -213,20 +283,47 @@ const handleMedia = async (ctx, getFile, prompt) => {
   }
 
   const msg = await ctx.reply('🤔 Processing...');
-  processingUsers.set(userId, { startTime: Date.now(), messageId: msg.message_id });
+  const abort = new AbortController();
+  let lastStatus = 'Thinking...';
+  processingUsers.set(userId, { startTime: Date.now(), messageId: msg.message_id, abort });
 
+  const onProgress = (text) => {
+    const line = text.split('\n').pop().trim();
+    if (line) lastStatus = line.slice(0, 50);
+  };
+
+  const progressInterval = setInterval(async () => {
+    const info = processingUsers.get(userId);
+    if (!info) return clearInterval(progressInterval);
+    const elapsed = Math.round((Date.now() - info.startTime) / 1000);
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    await ctx.telegram.editMessageText(chatId, msg.message_id, null,
+      `🤔 ${lastStatus} (${mins}m ${secs}s)\n/cancel to abort`
+    ).catch(() => {});
+  }, 30000);
+
+  const startTime = Date.now();
+  console.log(`[${new Date().toLocaleTimeString()}] 📎 Media from ${ctx.from?.username || userId}: ${prompt.slice(0, 60)}`);
   try {
     const link = await ctx.telegram.getFileLink(getFile(ctx));
     const dest = path.join(process.env.WORKSPACE_DIR, `upload_${Date.now()}${path.extname(link.href) || '.tmp'}`);
     await downloadFile(link.href, dest);
 
-    const result = await runClaude(`${prompt}\n\nFile: ${dest}`);
+    const result = await runClaude(`${prompt}\n\nFile: ${dest}`, null, { onProgress, signal: abort.signal });
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`[${new Date().toLocaleTimeString()}] ✅ Media reply to ${ctx.from?.username || userId} (${elapsed}s)`);
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
     await sendResponse(ctx.telegram, chatId, result.response);
   } catch (e) {
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`[${new Date().toLocaleTimeString()}] ❌ Media error for ${ctx.from?.username || userId} (${elapsed}s): ${e.message}`);
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
-    await ctx.reply(`❌ ${e.message}`);
+    if (e.message !== 'Request cancelled') {
+      await ctx.reply(`❌ ${e.message}`);
+    }
   } finally {
+    clearInterval(progressInterval);
     processingUsers.delete(userId);
   }
 };
@@ -242,10 +339,13 @@ bot.on('document', (ctx) => handleMedia(ctx,
 ));
 
 // Error handling
-bot.catch((err, ctx) => ctx.reply('An error occurred. Please try again.'));
+bot.catch((err, ctx) => {
+  console.error(`[${new Date().toISOString()}] Bot middleware error:`, err.message);
+  ctx.reply('An error occurred. Please try again.').catch(() => {});
+});
 
-// Start server
-(async () => {
+// Auto-restart polling on crash
+async function startBot() {
   const webhookUrl = process.env.WEBHOOK_URL;
 
   if (webhookUrl && !webhookUrl.includes('your-subdomain')) {
@@ -269,9 +369,32 @@ bot.catch((err, ctx) => ctx.reply('An error occurred. Please try again.'));
     });
   } else {
     console.log(`🤖 Starting Agent K in polling mode | Workspace: ${process.env.WORKSPACE_DIR}`);
-    await bot.launch();
+    await bot.launch({
+      dropPendingUpdates: true,
+      allowedUpdates: ['message', 'callback_query'],
+      polling: { timeout: 60 },  // long-poll 60s (default 30s)
+    });
   }
-})();
+}
+
+// Global error handlers — prevent crash on network timeouts
+process.on('uncaughtException', (err) => {
+  console.error(`[${new Date().toISOString()}] Uncaught exception: ${err.message}`);
+  if (err.code === 'ETIMEDOUT' || err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED' || err.code === 'EAI_AGAIN') {
+    console.log('⚡ Network error detected, restarting bot in 5s...');
+    bot.stop('restart').catch(() => {});
+    setTimeout(() => startBot().catch(console.error), 5000);
+  } else {
+    console.error('💀 Fatal error, exiting...');
+    process.exit(1);
+  }
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error(`[${new Date().toISOString()}] Unhandled rejection:`, err?.message || err);
+});
+
+startBot().catch(console.error);
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
