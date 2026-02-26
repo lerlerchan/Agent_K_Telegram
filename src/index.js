@@ -228,10 +228,8 @@ bot.on('text', async (ctx) => {
   let lastStatus = 'Thinking...';
   processingUsers.set(userId, { startTime: Date.now(), messageId: msg.message_id, abort });
 
-  const onProgress = (text) => {
-    // Capture short status from stderr (trim to 50 chars)
-    const line = text.split('\n').pop().trim();
-    if (line) lastStatus = line.slice(0, 50);
+  const onProgress = (status) => {
+    if (status) lastStatus = status;
   };
 
   // Progress: update message with elapsed time + status every 30s
@@ -297,9 +295,8 @@ const handleMedia = async (ctx, getFile, prompt) => {
   let lastStatus = 'Thinking...';
   processingUsers.set(userId, { startTime: Date.now(), messageId: msg.message_id, abort });
 
-  const onProgress = (text) => {
-    const line = text.split('\n').pop().trim();
-    if (line) lastStatus = line.slice(0, 50);
+  const onProgress = (status) => {
+    if (status) lastStatus = status;
   };
 
   const progressInterval = setInterval(async () => {

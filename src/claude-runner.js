@@ -39,6 +39,52 @@ function detectMcpServers(message) {
   return needed;
 }
 
+// Parse Claude CLI stderr into short, meaningful status (< 10 words)
+const TOOL_LABELS = {
+  Read: 'Reading file',
+  Write: 'Writing file',
+  Edit: 'Editing file',
+  Bash: 'Running command',
+  Glob: 'Searching files',
+  Grep: 'Searching code',
+  WebFetch: 'Fetching webpage',
+  WebSearch: 'Searching the web',
+  Task: 'Running subtask',
+  NotebookEdit: 'Editing notebook',
+};
+
+function parseProgress(line) {
+  // Try JSON parse for structured events
+  try {
+    const ev = JSON.parse(line);
+    // Tool use events
+    const tool = ev.tool || ev.tool_name;
+    if (tool) {
+      const label = TOOL_LABELS[tool] || `Using ${tool}`;
+      // Add short context from tool input
+      const input = ev.tool_input || ev.input || {};
+      if (input.file_path) return `${label}: ${input.file_path.split('/').pop()}`;
+      if (input.command) return `${label}: ${input.command.slice(0, 30)}`;
+      if (input.pattern) return `${label}: "${input.pattern}"`;
+      if (input.query) return `${label}: "${input.query.slice(0, 25)}"`;
+      if (input.url) return `Fetching: ${input.url.slice(0, 35)}`;
+      return label;
+    }
+    // Thinking / text events
+    if (ev.type === 'thinking' || ev.event === 'thinking') return 'Thinking...';
+    if (ev.type === 'result') return 'Finishing up...';
+  } catch {
+    // Not JSON — check for common text patterns
+    if (/thinking/i.test(line)) return 'Thinking...';
+    if (/tool.*read/i.test(line)) return 'Reading file';
+    if (/tool.*bash/i.test(line)) return 'Running command';
+    if (/tool.*write/i.test(line)) return 'Writing file';
+    if (/tool.*edit/i.test(line)) return 'Editing file';
+    if (/generating/i.test(line)) return 'Generating...';
+  }
+  return null;
+}
+
 const runClaude = (message, sessionId = null, { onProgress, signal } = {}) => {
   return new Promise((resolve, reject) => {
     const cwd = process.env.WORKSPACE_DIR || process.cwd();
@@ -103,8 +149,13 @@ const runClaude = (message, sessionId = null, { onProgress, signal } = {}) => {
     proc.stderr.on('data', (chunk) => {
       stderr += chunk.toString();
       if (onProgress) {
+        // Parse Claude CLI stderr for meaningful status
         const text = chunk.toString().trim();
-        if (text) onProgress(text);
+        if (!text) return;
+        for (const line of text.split('\n')) {
+          const status = parseProgress(line.trim());
+          if (status) onProgress(status);
+        }
       }
     });
 

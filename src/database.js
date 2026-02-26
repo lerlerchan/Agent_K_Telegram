@@ -1,7 +1,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const dbPath = process.env.DB_PATH || path.join(__dirname, '..', 'data', 'bot.db');
+const dbPath = process.env.DB_PATH || path.resolve(__dirname, '..', 'data', 'bot.db');
 let db = null;
 
 const getDb = () => {
@@ -55,7 +55,7 @@ const logMessage = (userId, userMsg, botResp) => {
       INSERT INTO audit_log (telegram_user_id, user_message, bot_response, created_at)
       VALUES (?, ?, ?, ?)
     `).run(String(userId), userMsg.slice(0, 10000), botResp.slice(0, 50000), new Date().toISOString());
-  } catch (e) { /* ignore logging errors */ }
+  } catch (e) { console.error(`[DB] logMessage failed: ${e.message}`); }
 };
 
 // Initialize DB eagerly at startup (avoid race conditions from concurrent handlers)
