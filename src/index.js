@@ -124,6 +124,13 @@ bot.use(async (ctx, next) => {
     if (ctx.message?.text) {
       ctx.message.text = ctx.message.text.replace(new RegExp(`@${botUsername}`, 'g'), '').trim();
     }
+
+    // Prepend replied-to message content so Claude has full context
+    if (isReplyToBot && ctx.message?.reply_to_message?.text) {
+      const quoted = ctx.message.reply_to_message.text.slice(0, 500);
+      ctx.message.text = `[Replying to your message: "${quoted}"]\n\n${ctx.message.text}`;
+    }
+
     return next();
   }
 });
@@ -248,13 +255,22 @@ bot.on('text', async (ctx) => {
     const startTime = Date.now();
     try {
       const sessionId = await getSession(userId);
-      const result = await runClaude(ctx.message.text, sessionId, { onProgress, signal: abort.signal });
+
+      // Build prompt — include reply context if user replied to a bot message
+      let prompt = ctx.message.text;
+      const replied = ctx.message.reply_to_message;
+      if (replied?.from?.id === (await ctx.telegram.getMe()).id && replied?.text) {
+        const quoted = replied.text.slice(0, 500);
+        prompt = `[Replying to your message: "${quoted}"]\n\n${prompt}`;
+      }
+
+      const result = await runClaude(prompt, sessionId, { onProgress, signal: abort.signal });
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       console.log(`[${new Date().toLocaleTimeString()}] ✅ Reply to ${ctx.from?.username || userId} (${elapsed}s, ${result.response.length} chars)`);
 
       if (result.sessionId) await saveSession(userId, result.sessionId);
-      await logMessage(userId, ctx.message.text, result.response);
+      await logMessage(userId, prompt, result.response);
       await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
       await sendResponse(ctx.telegram, chatId, result.response, userId);
     } catch (e) {
