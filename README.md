@@ -194,6 +194,62 @@ Agent_K_Telegram/
 └── package.json
 ```
 
+## Mac Mini Headless Setup
+
+If you're running Agent K on a Mac Mini as an always-on server, configure these settings so it won't sleep when unattended:
+
+**System Settings > Energy Saver:**
+- **Turn display off after**: 2 minutes (saves energy, bot doesn't need a display)
+- **Prevent automatic sleeping when the display is off**: ON
+- **Wake for network access**: ON
+- **Start up automatically after a power failure**: ON
+
+**System Settings > Lock Screen:**
+- **Require password after screen saver begins**: Never (or a long delay — prevents locking you out remotely)
+
+**System Settings > Users & Groups:**
+- **Automatic login**: Select your user account (ensures the bot starts after a reboot without needing a keyboard/mouse)
+
+**System Settings > General > Sharing:**
+- **Remote Login**: ON (enables SSH so you can manage the Mac Mini from another machine)
+
+**Auto-start Agent K on boot (optional):**
+
+Create a launchd plist at `~/Library/LaunchAgents/com.agentk.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.agentk.telegram</string>
+    <key>WorkingDirectory</key>
+    <string>/path/to/Agent_K_Telegram</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/node</string>
+        <string>src/index.js</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/agent-k.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/agent-k.err.log</string>
+</dict>
+</plist>
+```
+
+Load it:
+```bash
+launchctl load ~/Library/LaunchAgents/com.agentk.plist
+```
+
+> **Note:** Update the `WorkingDirectory` and node path (`which node`) to match your system.
+
 ## Deployment
 
 ### Polling (simplest)

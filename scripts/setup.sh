@@ -15,25 +15,25 @@ echo ""
 
 # ── 1. npm install ──
 if [ ! -d "node_modules" ]; then
-  echo "[1/7] Installing Node.js dependencies..."
+  echo "[1/9] Installing Node.js dependencies..."
   npm install
 else
-  echo "[1/7] Dependencies already installed."
+  echo "[1/9] Dependencies already installed."
 fi
 
 # ── 2. Skills symlink ──
 echo ""
-echo "[2/7] Setting up skills..."
+echo "[2/9] Setting up skills..."
 bash scripts/setup-skills.sh
 
 # ── 3. Soul setup (CLAUDE.md) ──
 echo ""
-echo "[3/7] Setting up agent soul..."
+echo "[3/9] Setting up agent soul..."
 bash scripts/setup-soul.sh
 
 # ── 4. Environment variables ──
 echo ""
-echo "[4/7] Configuring environment..."
+echo "[4/9] Configuring environment..."
 
 if [ "$1" = "--reconfigure" ]; then
   echo "  Reconfiguring .env..."
@@ -244,7 +244,7 @@ fi
 
 # ── 7. Check Claude CLI ──
 echo ""
-echo "[7/8] Checking prerequisites..."
+echo "[7/9] Checking prerequisites..."
 
 if command -v claude &>/dev/null; then
   CLAUDE_VER=$(claude --version 2>/dev/null || echo "unknown")
@@ -260,6 +260,47 @@ else
   echo "  Installing Playwright chromium..."
   npx playwright install chromium
 fi
+
+# ── 9. Mac Mini Headless Setup (optional) ──
+echo ""
+echo "[9/9] Mac Mini headless setup (optional)"
+echo ""
+echo "  If you're running Agent K on a Mac Mini as an always-on server,"
+echo "  configure it so it won't sleep and the display turns off."
+echo ""
+echo "  ┌──────────────────────────────────────────────────────────────┐"
+echo "  │  Mac Mini Headless Configuration                            │"
+echo "  ├──────────────────────────────────────────────────────────────┤"
+echo "  │                                                              │"
+echo "  │  System Settings > Energy Saver (or Energy):                │"
+echo "  │                                                              │"
+echo "  │  1. Turn display off after: 2 minutes (or your preference) │"
+echo "  │  2. Prevent automatic sleeping when the display is off: ON  │"
+echo "  │  3. Wake for network access: ON                             │"
+echo "  │  4. Start up automatically after a power failure: ON        │"
+echo "  │                                                              │"
+echo "  │  System Settings > Lock Screen:                             │"
+echo "  │                                                              │"
+echo "  │  5. Require password after screen saver begins: Never       │"
+echo "  │     (or a long delay — avoids locking you out remotely)     │"
+echo "  │                                                              │"
+echo "  │  System Settings > General > Login Items & Extensions:      │"
+echo "  │                                                              │"
+echo "  │  6. Enable 'Allow in the Background' for any launch agents  │"
+echo "  │                                                              │"
+echo "  │  System Settings > Users & Groups:                          │"
+echo "  │                                                              │"
+echo "  │  7. Automatic login: Select your user account               │"
+echo "  │     (ensures bot starts after reboot without keyboard)      │"
+echo "  │                                                              │"
+echo "  │  Optional — Enable SSH for remote access:                   │"
+echo "  │                                                              │"
+echo "  │  8. System Settings > General > Sharing                     │"
+echo "  │     > Remote Login: ON                                      │"
+echo "  │     (allows ssh into the Mac Mini from another machine)     │"
+echo "  │                                                              │"
+echo "  └──────────────────────────────────────────────────────────────┘"
+echo ""
 
 # ── Done ──
 echo ""
