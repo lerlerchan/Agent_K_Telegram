@@ -15,20 +15,25 @@ echo ""
 
 # ── 1. npm install ──
 if [ ! -d "node_modules" ]; then
-  echo "[1/6] Installing Node.js dependencies..."
+  echo "[1/7] Installing Node.js dependencies..."
   npm install
 else
-  echo "[1/6] Dependencies already installed."
+  echo "[1/7] Dependencies already installed."
 fi
 
 # ── 2. Skills symlink ──
 echo ""
-echo "[2/6] Setting up skills..."
+echo "[2/7] Setting up skills..."
 bash scripts/setup-skills.sh
 
-# ── 3. Environment variables ──
+# ── 3. Soul setup (CLAUDE.md) ──
 echo ""
-echo "[3/6] Configuring environment..."
+echo "[3/7] Setting up agent soul..."
+bash scripts/setup-soul.sh
+
+# ── 4. Environment variables ──
+echo ""
+echo "[4/7] Configuring environment..."
 
 if [ "$1" = "--reconfigure" ]; then
   echo "  Reconfiguring .env..."
@@ -110,9 +115,9 @@ if [ "$CONFIGURE_ENV" = true ]; then
   rm -f .env.bak
 fi
 
-# ── 4. Gmail auth ──
+# ── 5. Gmail auth ──
 echo ""
-echo "[4/6] Gmail setup"
+echo "[5/7] Gmail setup"
 
 if [ "$1" = "--gmail" ] || [ ! -f "$HOME/.gmail-mcp/credentials.json" ]; then
   echo ""
@@ -143,9 +148,9 @@ else
   echo "  Gmail credentials found. Skipping."
 fi
 
-# ── 5. Check Claude CLI ──
+# ── 6. Check Claude CLI ──
 echo ""
-echo "[5/6] Checking prerequisites..."
+echo "[6/7] Checking prerequisites..."
 
 if command -v claude &>/dev/null; then
   CLAUDE_VER=$(claude --version 2>/dev/null || echo "unknown")
@@ -154,7 +159,7 @@ else
   echo "  WARNING: Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
 fi
 
-# ── 6. Playwright ──
+# ── 7. Playwright ──
 if npx playwright --version &>/dev/null 2>&1; then
   echo "  Playwright: installed"
 else

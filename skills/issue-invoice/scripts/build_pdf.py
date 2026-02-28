@@ -33,18 +33,24 @@ items = c.fetchall()
 conn.close()
 
 # ── Config ────────────────────────────────────────────────────────────────────
+def _req(var):
+    v = os.environ.get(var)
+    if not v:
+        print(f"ERROR: {var} not set"); sys.exit(1)
+    return v
+
 ISSUER = {
-    "name":    os.environ.get("COMPANY_NAME", "AiTraining2U PLT"),
-    "reg":     os.environ.get("COMPANY_REG", "202504002669"),
-    "sst_no":  os.environ.get("COMPANY_SST_NO", "B16-2602-32000011"),
-    "contact": os.environ.get("COMPANY_CONTACT_NAME", "Atlas Chan"),
-    "email":   os.environ.get("COMPANY_EMAIL", "atlas.aitraining2u@gmail.com"),
-    "address": os.environ.get("COMPANY_ADDRESS", "D-10-5, Sky Condominium, Persiaran Puchong Jaya Selatan, 47100 Selangor"),
+    "name":    _req("COMPANY_NAME"),
+    "reg":     _req("COMPANY_REG"),
+    "sst_no":  _req("COMPANY_SST_NO"),
+    "contact": _req("COMPANY_CONTACT_NAME"),
+    "email":   _req("COMPANY_EMAIL"),
+    "address": _req("COMPANY_ADDRESS"),
 }
 BANK = {
-    "name":      os.environ.get("BANK_NAME", "Maybank"),
-    "acct_name": os.environ.get("BANK_ACCT_NAME", "AiTraining2U PLT"),
-    "acct_no":   os.environ.get("BANK_ACCT_NO", "562348788599"),
+    "name":      _req("BANK_NAME"),
+    "acct_name": _req("BANK_ACCT_NAME"),
+    "acct_no":   _req("BANK_ACCT_NO"),
 }
 
 DARK_BLUE  = HexColor("#1A3C5E")

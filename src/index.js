@@ -10,8 +10,8 @@ for (const key of REQUIRED_ENV) {
 }
 
 const { Telegraf } = require('telegraf');
-const { runClaude } = require('./claude-runner');
-const { getSession, saveSession, logMessage } = require('./database');
+const { runClaude, isComplexTask } = require('./claude-runner');
+const { logMessage, getRecentMessages } = require('./database');
 const { isUserAllowed, splitMessage, markdownToHtml } = require('./utils');
 const express = require('express');
 const fs = require('fs');
@@ -24,7 +24,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN, {
     agent: new (require('https').Agent)({ keepAlive: true, timeout: 120000 }),
     webhookReply: false,
   },
-  handlerTimeout: 600_000, // 10 min for long Claude responses
+  handlerTimeout: 1_800_000, // 30 min — match Claude's hard timeout
 });
 const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'];
 
@@ -147,13 +147,13 @@ bot.command('chatid', (ctx) => {
 });
 
 bot.command('new', async (ctx) => {
-  await saveSession(ctx.from.id.toString(), null);
-  ctx.reply('New conversation started.');
+  ctx.reply('New conversation started. (Each message already uses fresh context from last 5 messages.)');
 });
 
 bot.command('status', async (ctx) => {
-  const session = await getSession(ctx.from.id.toString());
-  ctx.reply(`Status: ✅ Online\nSession: ${session ? 'Active' : 'None'}\nWorkspace: ${process.env.WORKSPACE_DIR}`);
+  const recent = getRecentMessages(ctx.from.id.toString(), 1);
+  const lastMsg = recent.length > 0 ? new Date(recent[0].created_at).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' }) : 'None';
+  ctx.reply(`Status: ✅ Online\nLast message: ${lastMsg}\nWorkspace: ${process.env.WORKSPACE_DIR}`);
 });
 
 bot.command('cd', (ctx) => {
@@ -229,8 +229,9 @@ bot.on('text', async (ctx) => {
     }
   }
 
-  console.log(`[${new Date().toLocaleTimeString()}] ⚙️  Processing for ${ctx.from?.username || userId}...`);
-  const msg = await ctx.reply('🤔 Processing...');
+  const complex = isComplexTask(ctx.message.text);
+  console.log(`[${new Date().toLocaleTimeString()}] ⚙️  Processing for ${ctx.from?.username || userId}${complex ? ' [OPUS]' : ''}...`);
+  const msg = await ctx.reply(complex ? '🧠 Processing with Opus...' : '🤔 Processing...');
   const abort = new AbortController();
   let lastStatus = 'Thinking...';
   processingUsers.set(userId, { startTime: Date.now(), messageId: msg.message_id, abort });
@@ -251,40 +252,60 @@ bot.on('text', async (ctx) => {
     ).catch(() => {});
   }, 30000);
 
-  setImmediate(async () => {
-    const startTime = Date.now();
-    try {
-      const sessionId = await getSession(userId);
-
-      // Build prompt — include reply context if user replied to a bot message
-      let prompt = ctx.message.text;
-      const replied = ctx.message.reply_to_message;
-      if (replied?.from?.id === (await ctx.telegram.getMe()).id && replied?.text) {
-        const quoted = replied.text.slice(0, 500);
-        prompt = `[Replying to your message: "${quoted}"]\n\n${prompt}`;
-      }
-
-      const result = await runClaude(prompt, sessionId, { onProgress, signal: abort.signal });
-
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      console.log(`[${new Date().toLocaleTimeString()}] ✅ Reply to ${ctx.from?.username || userId} (${elapsed}s, ${result.response.length} chars)`);
-
-      if (result.sessionId) await saveSession(userId, result.sessionId);
-      await logMessage(userId, prompt, result.response);
-      await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
-      await sendResponse(ctx.telegram, chatId, result.response, userId);
-    } catch (e) {
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      console.log(`[${new Date().toLocaleTimeString()}] ❌ Error for ${ctx.from?.username || userId} (${elapsed}s): ${e.message}`);
-      await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
-      if (e.message !== 'Request cancelled') {
-        await ctx.telegram.sendMessage(chatId, `❌ Error: ${e.message}`);
-      }
-    } finally {
-      clearInterval(progressInterval);
-      processingUsers.delete(userId);
+  // Run Claude — awaited directly (not setImmediate) to prevent Telegraf re-queue
+  const startTime = Date.now();
+  let prompt = ctx.message.text;
+  try {
+    // Build prompt — include reply context if user replied to a bot message
+    const replied = ctx.message.reply_to_message;
+    if (replied?.from?.id === (await ctx.telegram.getMe()).id && replied?.text) {
+      const quoted = replied.text.slice(0, 500);
+      prompt = `[Replying to your message: "${quoted}"]\n\n${prompt}`;
     }
-  });
+
+    // Inject chat context so Claude knows where the message came from
+    const chatType = ctx.chat?.type; // 'private', 'group', or 'supergroup'
+    const isGroup = chatType === 'group' || chatType === 'supergroup';
+    const userName = ctx.from?.first_name || ctx.from?.username || 'Unknown';
+    const chatContext = isGroup
+      ? `[Chat context: Telegram GROUP chat ${chatId}. Send files/messages to GROUP $TELEGRAM_GROUP_CHAT_ID]\n[User: ${userName} (ID: ${userId})]`
+      : `[Chat context: Telegram DM (private) chat ${chatId}. Send files/messages to DM $TELEGRAM_DM_CHAT_ID]\n[User: ${userName} (ID: ${userId})]`;
+
+    // Always inject recent history — every message is a fresh Claude process
+    const recent = getRecentMessages(userId, 10);
+    if (recent.length > 0) {
+      const history = recent.map(m => {
+        const time = new Date(m.created_at).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', hour: '2-digit', minute: '2-digit' });
+        const userMsg = (m.user_message || '').slice(0, 200);
+        const botMsg = (m.bot_response || '').slice(0, 300);
+        return `[${time}] User: ${userMsg}\n[${time}] Bot: ${botMsg}`;
+      }).join('\n\n');
+      prompt = `${chatContext}\n[Recent conversation history for context]\n${history}\n\n---\n[Current message]\n${prompt}`;
+    } else {
+      prompt = `${chatContext}\n${prompt}`;
+    }
+
+    const result = await runClaude(prompt, { onProgress, signal: abort.signal });
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`[${new Date().toLocaleTimeString()}] ✅ Reply to ${ctx.from?.username || userId} (${elapsed}s, ${result.response.length} chars)`);
+
+    await logMessage(userId, prompt, result.response);
+    await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
+    await sendResponse(ctx.telegram, chatId, result.response, userId);
+  } catch (e) {
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`[${new Date().toLocaleTimeString()}] ❌ Error for ${ctx.from?.username || userId} (${elapsed}s): ${e.message}`);
+    // Log failed/cancelled requests to audit_log too
+    await logMessage(userId, prompt, `[ERROR after ${elapsed}s] ${e.message}`);
+    await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
+    if (e.message !== 'Request cancelled') {
+      await ctx.telegram.sendMessage(chatId, `❌ Error: ${e.message}`);
+    }
+  } finally {
+    clearInterval(progressInterval);
+    processingUsers.delete(userId);
+  }
 });
 
 // Handle photos & documents
@@ -330,17 +351,29 @@ const handleMedia = async (ctx, getFile, prompt) => {
   console.log(`[${new Date().toLocaleTimeString()}] 📎 Media from ${ctx.from?.username || userId}: ${prompt.slice(0, 60)}`);
   try {
     const link = await ctx.telegram.getFileLink(getFile(ctx));
-    const dest = path.join(process.env.WORKSPACE_DIR, `upload_${Date.now()}${path.extname(link.href) || '.tmp'}`);
+    // Preserve original filename for documents, fallback to URL extension
+    const origName = ctx.message?.document?.file_name;
+    const ext = origName ? path.extname(origName) : (path.extname(new URL(link.href).pathname) || '.tmp');
+    const dest = path.join(process.env.WORKSPACE_DIR, `upload_${Date.now()}${ext}`);
     await downloadFile(link.href, dest);
 
-    const result = await runClaude(`${prompt}\n\nFile: ${dest}`, null, { onProgress, signal: abort.signal });
+    // Inject chat context so Claude knows where the message came from
+    const chatType = ctx.chat?.type;
+    const isGroup = chatType === 'group' || chatType === 'supergroup';
+    const chatContext = isGroup
+      ? `[Chat context: Telegram GROUP chat ${chatId}. Send files/messages to GROUP $TELEGRAM_GROUP_CHAT_ID]`
+      : `[Chat context: Telegram DM (private) chat ${chatId}. Send files/messages to DM $TELEGRAM_DM_CHAT_ID]`;
+    const filePrompt = `${chatContext}\n${prompt}\n\nThe user sent a file. It has been downloaded to: ${dest}\nOriginal filename: ${origName || 'unknown'}\nPlease read/process this file to answer the user's request.`;
+    const result = await runClaude(filePrompt, { onProgress, signal: abort.signal });
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(`[${new Date().toLocaleTimeString()}] ✅ Media reply to ${ctx.from?.username || userId} (${elapsed}s)`);
+    await logMessage(userId, filePrompt, result.response);
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
     await sendResponse(ctx.telegram, chatId, result.response);
   } catch (e) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(`[${new Date().toLocaleTimeString()}] ❌ Media error for ${ctx.from?.username || userId} (${elapsed}s): ${e.message}`);
+    await logMessage(userId, prompt, `[ERROR after ${elapsed}s] ${e.message}`);
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
     if (e.message !== 'Request cancelled') {
       await ctx.reply(`❌ ${e.message}`);

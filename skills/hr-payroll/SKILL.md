@@ -1,8 +1,9 @@
-# Skill: HR & Payroll — Employment Contract
-
-Use this skill when user asks to create an employment contract, onboard a new employee, or issue an internship agreement for AiTraining2U PLT.
-
 ---
+name: hr-payroll
+description: Create employment contracts, onboard new employees, or issue internship agreements for AiTraining2U PLT. Use when asked about contracts, hiring, onboarding, employee records, or HR documents.
+---
+
+# HR & Payroll — Employment Contract
 
 ## Contract Types Supported
 - **Full-time** (permanent employment)
@@ -30,7 +31,7 @@ Use this skill when user asks to create an employment contract, onboard a new em
 | Basic salary (RM/month) | ✅ | ✅ | — | Must ask |
 | Monthly allowance (intern) | — | — | ✅ | Must ask |
 | Allowances breakdown | optional | optional | — | e.g. transport: 200 |
-| Probation (months) | Default: 3 | optional | ❌ | Ask if different |
+| Probation (months) | Default: 0 (none) | optional | ❌ | Ask if different |
 
 ### 2. Get Next Employee ID
 ```python
@@ -66,7 +67,7 @@ conn.commit(); conn.close()
 ### 4. Generate Contract PDF
 ```bash
 ~/.local/bin/uv run --with reportlab python3 \
-  ~/Agent_K_Telegram/skills/hr-payroll/build_contract.py ATU-EMP-YYYY-XXXX
+  ~/Agent_K_Telegram/skills/hr-payroll/scripts/build_contract.py ATU-EMP-YYYY-XXXX
 ```
 - Saved to: `~/Documents/AiTraining2U/HR/Contracts/{YYYY}/Unsigned/{emp_id}_{Name}_{Type}-Contract_{date}.pdf`
 - DB `contract_pdf` field auto-updated by the script
@@ -94,7 +95,7 @@ ONLY after explicit approval:
 - **ALWAYS send via the custom script** (NOT Gmail MCP — MCP strips the display name from From header):
   ```bash
   ~/.local/bin/uv run --with google-api-python-client --with google-auth \
-    python3 ~/Agent_K_Telegram/skills/send-email/send_email.py \
+    python3 ~/Agent_K_Telegram/skills/send-email/scripts/send_email.py \
     --to EMPLOYEE_EMAIL \
     --cc $CC_EMAILS \
     --subject "SUBJECT" \
@@ -132,7 +133,7 @@ When user sends back the signed PDF:
 
 ## Database — `~/hr.db`
 - Tables: `employees`, `emp_sequence`
-- Setup script: `~/Agent_K_Telegram/skills/hr-payroll/setup_db.py` (run once if DB missing)
+- Setup script: `~/Agent_K_Telegram/skills/hr-payroll/scripts/setup_db.py` (run once if DB missing)
 - Employee ID format: `ATU-EMP-YYYY-XXXX`
 
 ### Key DB Fields
@@ -151,18 +152,16 @@ When user sends back the signed PDF:
 | Rule | Value |
 |---|---|
 | Max weekly hours | 45 hours |
-| Annual leave | 8 / 12 / 16 days (by service length) |
-| Sick leave | 14 / 18 / 22 days (by service length) |
-| Hospitalisation | 60 days |
+| Annual leave | 16 days per year (flat) |
 | Maternity leave | 98 consecutive days (paid) |
 | Paternity leave | 7 days (paid, married, ≤5 children) |
 | Public holidays | 11 federal days |
 | Overtime rate | Minimum 1.5× hourly rate |
 | EPF (employee) | 9% basic salary |
-| EPF (employer) | 12% basic salary |
+| EPF (employer) | 15% basic salary |
 | SOCSO | 0.5% employee / 1.75% employer |
 | EIS | 0.2% each |
-| Termination notice | 4 / 6 / 8 weeks (by service length) |
+| Termination notice | 2 months (60 days) — flat |
 | Pregnant employee | Cannot be terminated except gross misconduct / business closure (s.37) |
 | Non-compete | NOT included — void under Contracts Act 1950 s.28 |
 | Confidentiality | Included — enforceable during and after employment |

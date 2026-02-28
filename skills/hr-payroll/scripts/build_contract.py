@@ -35,11 +35,17 @@ if not emp:
 conn.close()
 
 # ── Config ────────────────────────────────────────────────────────────────────
+def _req(var):
+    v = os.environ.get(var)
+    if not v:
+        print(f"ERROR: {var} not set"); sys.exit(1)
+    return v
+
 EMPLOYER = {
-    "name":    os.environ.get("COMPANY_NAME", "AiTraining2U PLT"),
-    "reg":     os.environ.get("COMPANY_REG", "202504002669"),
-    "address": os.environ.get("COMPANY_ADDRESS", "D-10-5, Sky Condominium, Persiaran Puchong Jaya Selatan, 47100 Selangor") + ", Malaysia",
-    "rep":     os.environ.get("COMPANY_CONTACT_NAME", "Atlas Chan"),
+    "name":    _req("COMPANY_NAME"),
+    "reg":     _req("COMPANY_REG"),
+    "address": _req("COMPANY_ADDRESS") + ", Malaysia",
+    "rep":     _req("COMPANY_CONTACT_NAME"),
     "title":   os.environ.get("COMPANY_CONTACT_TITLE", "Director"),
 }
 
@@ -344,13 +350,24 @@ story.append(kv_table([
     ("Weekly Hours:", "45 hours per week (as per Employment Act 1955)"),
     ("Rest Day:", "Saturday & Sunday"),
 ]))
+sec_num += 1
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WORKING ARRANGEMENT
+# ══════════════════════════════════════════════════════════════════════════════
 story.append(Spacer(1, 2*mm))
-if not is_intern:
-    story.append(Paragraph(
-        "Overtime work, if required, shall be compensated at a minimum rate of one and a half (1.5) times "
-        "the Employee's hourly rate of pay, subject to a maximum of 104 overtime hours per month and shall "
-        "not exceed 12 hours per day inclusive of normal working hours.",
-        s_body))
+story.append(section_header(f"{sec_num}.  WORKING ARRANGEMENT"))
+story.append(Spacer(1, 3*mm))
+story.append(Paragraph(
+    "The Employee will primarily work <b>remotely</b>. The Employee is required to attend "
+    "<b>one (1) physical face-to-face meeting/workday per week</b> at a location designated "
+    "by the Company.",
+    s_body))
+story.append(Spacer(1, 2*mm))
+story.append(Paragraph(
+    "The Employer reserves the right to modify the working arrangement with reasonable "
+    "notice, in accordance with business needs and applicable legislation.",
+    s_body))
 sec_num += 1
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -375,16 +392,22 @@ if is_intern:
 else:
     basic = emp["basic_salary"] or 0
     allow_rows = []
+    variable_rows = []
     total_allow = 0.0
     for k, v in allowances.items():
-        allow_rows.append((f"{k.title()} Allowance:", f"RM {float(v):,.2f}"))
-        total_allow += float(v)
+        val = float(v)
+        if "per" in k.lower() or "day" in k.lower():
+            variable_rows.append((f"{k}:", f"RM {val:,.0f}"))
+        else:
+            allow_rows.append((f"{k.title()} Allowance:", f"RM {val:,.2f}"))
+            total_allow += val
     gross = basic + total_allow
 
     sal_rows = [("Basic Salary:", f"RM {basic:,.2f}")]
     sal_rows += allow_rows
     if total_allow > 0:
         sal_rows.append(("Gross Monthly Salary:", f"RM {gross:,.2f}"))
+    sal_rows += variable_rows
     sal_rows += [
         ("Payment Date:", "On or before the 28th of each month"),
         ("Payment Method:", "Bank transfer"),
@@ -420,13 +443,13 @@ if is_intern:
     ]
 else:
     leave_data = [
-        ["Leave Type", "< 2 Years Service", "2–5 Years", "≥ 5 Years"],
-        ["Annual Leave", "8 days", "12 days", "16 days"],
-        ["Sick Leave", "14 days", "18 days", "22 days"],
-        ["Hospitalisation Leave", "60 days", "60 days", "60 days"],
-        ["Maternity Leave", "98 consecutive days (paid)", "", ""],
-        ["Paternity Leave", "7 consecutive days (paid)", "", ""],
-        ["Public Holidays", "11 federal paid holidays per year", "", ""],
+        ["Leave Type", "Entitlement"],
+        ["Annual Leave", "16 days per year"],
+        ["Sick Leave", "14 days per year (medical certificate required)"],
+        ["Hospitalisation Leave", "Up to 60 days per year (inclusive of sick leave)"],
+        ["Public Holidays", "11 federal paid holidays per year"],
+        ["Maternity Leave", "98 consecutive days (paid)"],
+        ["Paternity Leave", "7 consecutive days (paid)"],
     ]
 
 hdr_cols = len(leave_data[0])
@@ -443,8 +466,6 @@ ltbl.setStyle(TableStyle([
     ("BOTTOMPADDING", (0,0),(-1,-1), 5),
     ("LEFTPADDING",   (0,0),(-1,-1), 6),
     ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
-    ("SPAN",          (1,5),(3,5), ) if not is_intern else ("SPAN",(0,0),(0,0),),
-    ("SPAN",          (1,6),(3,6), ) if not is_intern else ("SPAN",(0,0),(0,0),),
 ]))
 story.append(ltbl)
 story.append(Spacer(1, 2*mm))
@@ -467,7 +488,7 @@ if not is_intern:
     story.append(Spacer(1, 2*mm))
     stat_data = [
         ["Scheme", "Employee Contribution", "Employer Contribution"],
-        ["EPF (Employees Provident Fund)", "9% of basic salary*", "12% of basic salary*"],
+        ["EPF (Employees Provident Fund)", "11% of basic salary*", "15% of basic salary*"],
         ["SOCSO (Social Security)", "0.5% of wages", "1.75% of wages"],
         ["EIS (Employment Insurance)", "0.2% of wages", "0.2% of wages"],
         ["PCB / MTD (Income Tax)", "As per LHDN schedule", "Employer deducts & remits"],
@@ -533,31 +554,8 @@ story.append(Spacer(1, 3*mm))
 if not is_intern:
     story.append(Paragraph(f"{sec_num}.1  Notice Period", s_clause))
     story.append(Paragraph(
-        "Either party may terminate this agreement by providing written notice as follows:",
-        s_body))
-    notice_data = [
-        ["Length of Service", "Notice Period"],
-        ["Less than 2 years", "4 weeks"],
-        ["2 years to less than 5 years", "6 weeks"],
-        ["5 years or more", "8 weeks"],
-    ]
-    ntbl = Table(notice_data, colWidths=[W*0.55, W*0.45])
-    ntbl.setStyle(TableStyle([
-        ("BACKGROUND",    (0,0),(-1,0), DARK_BLUE),
-        ("TEXTCOLOR",     (0,0),(-1,0), WHITE),
-        ("FONTNAME",      (0,0),(-1,0), "Helvetica-Bold"),
-        ("FONTSIZE",      (0,0),(-1,-1), 8.5),
-        ("ROWBACKGROUNDS",(0,1),(-1,-1), [WHITE, LIGHT_GRAY]),
-        ("GRID",          (0,0),(-1,-1), 0.3, HexColor("#CCCCCC")),
-        ("TOPPADDING",    (0,0),(-1,-1), 5),
-        ("BOTTOMPADDING", (0,0),(-1,-1), 5),
-        ("LEFTPADDING",   (0,0),(-1,-1), 6),
-        ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
-    ]))
-    story.append(ntbl)
-    story.append(Spacer(1, 2*mm))
-    story.append(Paragraph(
-        "Either party may, in lieu of notice, pay or forfeit salary equivalent to the notice period.",
+        "Either party may terminate this agreement by giving <b>two (2) months</b> written notice "
+        "or payment in lieu thereof.",
         s_body))
 
     story.append(Paragraph(f"{sec_num}.2  Summary Dismissal", s_clause))

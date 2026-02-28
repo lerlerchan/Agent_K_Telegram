@@ -16,8 +16,10 @@ from google.auth.transport.requests import Request
 
 TOKEN_PATH = os.path.expanduser("~/.gmail-mcp/credentials.json")
 KEYS_PATH  = os.path.expanduser("~/.gmail-mcp/gcp-oauth.keys.json")
-FROM_NAME  = os.environ.get("FROM_NAME", "Atlas (AiTraining2U)")
-FROM_EMAIL = os.environ.get("FROM_EMAIL", "atlas.aitraining2u@gmail.com")
+FROM_NAME  = os.environ.get("FROM_NAME")
+FROM_EMAIL = os.environ.get("FROM_EMAIL")
+if not FROM_NAME or not FROM_EMAIL:
+    print("ERROR: FROM_NAME and FROM_EMAIL must be set"); sys.exit(1)
 
 def get_service():
     with open(TOKEN_PATH) as f:
@@ -42,7 +44,8 @@ def get_service():
 
 
 def send(to: list, subject: str, html_body: str, cc: list = None,
-         attachments: list = None, reply_to: str = None):
+         attachments: list = None, reply_to: str = None,
+         thread_id: str = None, in_reply_to: str = None):
     msg = MIMEMultipart("mixed")
     msg["From"]    = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"]      = ", ".join(to)
@@ -51,6 +54,9 @@ def send(to: list, subject: str, html_body: str, cc: list = None,
         msg["Cc"] = ", ".join(cc)
     if reply_to:
         msg["Reply-To"] = reply_to
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+        msg["References"]  = in_reply_to
 
     # HTML body
     alt = MIMEMultipart("alternative")
@@ -72,8 +78,11 @@ def send(to: list, subject: str, html_body: str, cc: list = None,
 
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
     service = get_service()
+    body = {"raw": raw}
+    if thread_id:
+        body["threadId"] = thread_id
     result = service.users().messages().send(
-        userId="me", body={"raw": raw}
+        userId="me", body=body
     ).execute()
     print(f"Sent. Message ID: {result['id']}")
     return result["id"]
@@ -86,7 +95,9 @@ if __name__ == "__main__":
     parser.add_argument("--html",     required=True, help="HTML body string or @file.html")
     parser.add_argument("--cc",       nargs="*", default=[])
     parser.add_argument("--attach",   nargs="*", default=[])
-    parser.add_argument("--reply-to", default=None)
+    parser.add_argument("--reply-to",    default=None)
+    parser.add_argument("--thread-id",   default=None, help="Gmail thread ID for reply")
+    parser.add_argument("--in-reply-to", default=None, help="Message-ID header of email being replied to")
     args = parser.parse_args()
 
     html = args.html
@@ -94,4 +105,5 @@ if __name__ == "__main__":
         with open(html[1:]) as f:
             html = f.read()
 
-    send(args.to, args.subject, html, args.cc, args.attach, args.reply_to)
+    send(args.to, args.subject, html, args.cc, args.attach, args.reply_to,
+         args.thread_id, args.in_reply_to)

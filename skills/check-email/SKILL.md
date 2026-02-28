@@ -11,6 +11,7 @@ Check the Atlas Gmail inbox (atlas.AiTraining2U@gmail.com) for emails.
 2. Search for unread emails: `search_emails` with query `is:unread`
 3. For each important email, use `read_email` to get full content
 4. Summarize findings to user
+5. **ALWAYS mark all fetched unread emails as read** using `batch_modify_emails` with `removeLabelIds: ["UNREAD"]` after presenting the summary
 
 ## Summary Format
 

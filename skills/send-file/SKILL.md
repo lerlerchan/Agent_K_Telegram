@@ -1,6 +1,6 @@
 ---
 name: send-file
-description: Generate and deliver a file to the user. Default delivery is via Telegram group chat. Use when user requests a document, report, or any file output.
+description: Generate and deliver a file to the user. Delivery is context-aware — send to wherever the user engaged from (group→group, DM→DM). Use when user requests a document, report, or any file output.
 ---
 
 Generate and deliver a file to the user.

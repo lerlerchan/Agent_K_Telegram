@@ -1,6 +1,9 @@
-# Skill: Issue Invoice
+---
+name: issue-invoice
+description: Create, issue, or generate invoices for AiTraining2U PLT. Use when asked to invoice a client, bill someone, create a quotation, or generate payment documents.
+---
 
-Use this skill whenever user asks to create, issue, or generate an invoice for AiTraining2U PLT.
+# Issue Invoice
 
 ## Workflow
 
@@ -67,7 +70,7 @@ conn.commit(); conn.close()
 ### 4. Generate PDF
 ```bash
 ~/.local/bin/uv run --with reportlab python3 \
-  ~/Agent_K_Telegram/skills/issue-invoice/build_pdf.py INV-ATU-YYYY-XXXX
+  ~/Agent_K_Telegram/skills/issue-invoice/scripts/build_pdf.py INV-ATU-YYYY-XXXX
 ```
 - PDF saves to `~/Documents/AiTraining2U/Invoices/{YYYY}/{invoice_no}_{Company-Slug}.pdf`
 - Company slug: strip legal suffixes (Sdn Bhd, PLT, Berhad, Ltd), spaces → hyphens (e.g. `Vynn-Capital`, `Kumpulan-Modal-Perdana`)
@@ -97,7 +100,7 @@ conn.commit(); conn.close()
 - **ALWAYS send via the custom script** (NOT Gmail MCP — MCP strips the display name from From header):
   ```bash
   ~/.local/bin/uv run --with google-api-python-client --with google-auth \
-    python3 ~/Agent_K_Telegram/skills/send-email/send_email.py \
+    python3 ~/Agent_K_Telegram/skills/send-email/scripts/send_email.py \
     --to CLIENT_EMAIL \
     --cc $CC_EMAILS \
     --subject "SUBJECT" \
@@ -136,7 +139,7 @@ conn.commit(); conn.close()
 ## Database
 - Path: `~/invoices.db`
 - Tables: `invoices`, `invoice_items`, `invoice_sequence`
-- Setup script: `~/Agent_K_Telegram/skills/issue-invoice/setup_db.py` (run once if DB missing)
+- Setup script: `~/Agent_K_Telegram/skills/issue-invoice/scripts/setup_db.py` (run once if DB missing)
 
 ## Accounting Fields (invoices table)
 | Field | Notes |

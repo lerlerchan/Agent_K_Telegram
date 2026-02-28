@@ -96,6 +96,8 @@ Skills are Claude Code slash commands stored in `skills/`. They are symlinked to
 | `/send-file` | send file | Deliver files via Telegram |
 | `/send-telegram` | send telegram | Send Telegram messages |
 | `/word` | Word document | Word document operations via MCP |
+| `/flight-checkin` | check in, boarding pass | Online flight check-in via Playwright |
+| `/mac-setup` | set up Mac, auto-login | Headless Mac Mini setup guide for Agent K |
 
 **Adding new skills:** Create a directory in `skills/` with a `SKILL.md` file. It will be automatically available via the whole-directory symlink.
 
