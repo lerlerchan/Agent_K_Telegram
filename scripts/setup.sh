@@ -60,6 +60,20 @@ if [ "$CONFIGURE_ENV" = true ]; then
   fi
   sed -i.bak "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=$BOT_TOKEN|" .env
 
+  echo ""
+  echo "  ┌─────────────────────────────────────────────────────────┐"
+  echo "  │  IMPORTANT: Disable Group Privacy for your bot         │"
+  echo "  │                                                        │"
+  echo "  │  1. Open @BotFather on Telegram                        │"
+  echo "  │  2. Send /mybots → select your bot                     │"
+  echo "  │  3. Bot Settings → Group Privacy → Turn OFF            │"
+  echo "  │                                                        │"
+  echo "  │  Without this, the bot can only see /commands in       │"
+  echo "  │  groups — it won't see regular messages.               │"
+  echo "  └─────────────────────────────────────────────────────────┘"
+  echo ""
+  read -rp "  Press Enter once you've disabled group privacy... "
+
   read -rp "  Allowed chat IDs (comma-separated, use /chatid to find): " CHAT_IDS
   if [ -z "$CHAT_IDS" ]; then
     echo "  ERROR: At least one chat ID is required for security."
@@ -100,10 +114,14 @@ if [ "$CONFIGURE_ENV" = true ]; then
   read -rp "  Email address for sending [default: same as company email]: " FROM_EMAIL
   [ -n "$FROM_EMAIL" ] && sed -i.bak "s|^FROM_EMAIL=.*|FROM_EMAIL=$FROM_EMAIL|" .env
 
-  read -rp "  Telegram group chat ID for file delivery: " TG_GROUP
+  echo ""
+  echo "  Telegram chat IDs (optional — press Enter to skip):"
+  echo "    To find group chat ID: add the bot to your group, then send /chatid"
+  echo "    To find your DM chat ID: message @userinfobot on Telegram"
+  read -rp "  Telegram group chat ID for file delivery (optional): " TG_GROUP
   [ -n "$TG_GROUP" ] && sed -i.bak "s|^TELEGRAM_GROUP_CHAT_ID=.*|TELEGRAM_GROUP_CHAT_ID=$TG_GROUP|" .env
 
-  read -rp "  Telegram DM chat ID for private delivery: " TG_DM
+  read -rp "  Telegram DM chat ID for private delivery (optional): " TG_DM
   [ -n "$TG_DM" ] && sed -i.bak "s|^TELEGRAM_DM_CHAT_ID=.*|TELEGRAM_DM_CHAT_ID=$TG_DM|" .env
 
   echo ""
@@ -115,42 +133,118 @@ if [ "$CONFIGURE_ENV" = true ]; then
   rm -f .env.bak
 fi
 
-# ── 5. Gmail auth ──
+# ── 5. Google Cloud Console setup ──
 echo ""
-echo "[5/7] Gmail setup"
+echo "[5/8] Google Cloud Console setup"
+echo ""
 
-if [ "$1" = "--gmail" ] || [ ! -f "$HOME/.gmail-mcp/credentials.json" ]; then
-  echo ""
-  echo "  We recommend creating a NEW Gmail account dedicated to your agent."
-  echo "  This keeps personal email separate and allows full API control."
-  echo ""
-  echo "  Steps to set up Gmail API access:"
-  echo "    1. Create a new Gmail account for your agent (e.g. your-agent@gmail.com)"
-  echo "    2. Go to console.cloud.google.com and create a new project"
-  echo "    3. Enable the Gmail API (APIs & Services > Library > Gmail API)"
-  echo "    4. Create OAuth 2.0 credentials:"
-  echo "       - APIs & Services > Credentials > Create Credentials > OAuth Client ID"
-  echo "       - Application type: Desktop app"
-  echo "       - Download the JSON file"
-  echo "    5. Add your agent's Gmail as a test user:"
-  echo "       - OAuth consent screen > Test users > Add your agent email"
-  echo ""
-  read -rp "  Path to downloaded OAuth client JSON (or Enter to skip): " OAUTH_PATH
-
-  if [ -n "$OAUTH_PATH" ] && [ -f "$OAUTH_PATH" ]; then
-    echo "  Running Gmail OAuth flow..."
-    python3 "$REPO_DIR/scripts/gmail-auth.py" "$OAUTH_PATH"
-  else
-    echo "  Skipped. Gmail sending disabled."
-    echo "  Run ./scripts/setup.sh --gmail later to set up."
-  fi
-else
-  echo "  Gmail credentials found. Skipping."
+SETUP_GOOGLE=false
+if [ "$1" = "--gmail" ] || [ "$1" = "--google" ]; then
+  SETUP_GOOGLE=true
+elif [ ! -f "$HOME/.gmail-mcp/credentials.json" ] && [ ! -f "$HOME/.gdrive-mcp/credentials.json" ]; then
+  SETUP_GOOGLE=true
 fi
 
-# ── 6. Check Claude CLI ──
+if [ "$SETUP_GOOGLE" = true ]; then
+  echo "  Gmail and Google Sheets/Drive require a Google Cloud project."
+  echo "  We recommend creating a NEW Gmail account dedicated to your agent."
+  echo ""
+  echo "  ┌──────────────────────────────────────────────────────────────┐"
+  echo "  │  STEP-BY-STEP: Google Cloud Console Setup                   │"
+  echo "  ├──────────────────────────────────────────────────────────────┤"
+  echo "  │                                                              │"
+  echo "  │  1. Go to https://console.cloud.google.com                  │"
+  echo "  │     - Sign in with your agent's Google account              │"
+  echo "  │     - Click 'Select a project' (top bar) > 'New Project'   │"
+  echo "  │     - Name it (e.g. 'Agent K') and click 'Create'          │"
+  echo "  │                                                              │"
+  echo "  │  2. Enable APIs:                                            │"
+  echo "  │     - Go to: APIs & Services > Library                      │"
+  echo "  │     - Search 'Gmail API' > click > 'Enable'                │"
+  echo "  │     - Search 'Google Sheets API' > click > 'Enable'        │"
+  echo "  │     - Search 'Google Drive API' > click > 'Enable'         │"
+  echo "  │                                                              │"
+  echo "  │  3. Configure OAuth consent screen:                         │"
+  echo "  │     - Go to: APIs & Services > OAuth consent screen         │"
+  echo "  │     - Choose 'External' > click 'Create'                   │"
+  echo "  │     - App name: your agent's name                           │"
+  echo "  │     - User support email: your agent's email                │"
+  echo "  │     - Developer email: your agent's email                   │"
+  echo "  │     - Click 'Save and Continue' through Scopes              │"
+  echo "  │     - On 'Test users' page: click 'Add Users'              │"
+  echo "  │       > add your agent's Gmail address > 'Save'            │"
+  echo "  │     - Click 'Save and Continue' > 'Back to Dashboard'      │"
+  echo "  │                                                              │"
+  echo "  │  4. Create OAuth credentials:                               │"
+  echo "  │     - Go to: APIs & Services > Credentials                  │"
+  echo "  │     - Click '+ Create Credentials' > 'OAuth Client ID'    │"
+  echo "  │     - Application type: 'Desktop app'                      │"
+  echo "  │     - Name: anything (e.g. 'Agent K Desktop')              │"
+  echo "  │     - Click 'Create'                                        │"
+  echo "  │     - Click 'Download JSON' on the popup                   │"
+  echo "  │     - Save the file somewhere accessible                    │"
+  echo "  │                                                              │"
+  echo "  └──────────────────────────────────────────────────────────────┘"
+  echo ""
+
+  # ── 5a. Gmail auth ──
+  echo "  --- Gmail API Setup ---"
+  if [ "$1" = "--gmail" ] || [ ! -f "$HOME/.gmail-mcp/credentials.json" ]; then
+    read -rp "  Path to OAuth client JSON for Gmail (or Enter to skip): " GMAIL_OAUTH_PATH
+
+    if [ -n "$GMAIL_OAUTH_PATH" ] && [ -f "$GMAIL_OAUTH_PATH" ]; then
+      echo "  Running Gmail OAuth flow..."
+      python3 "$REPO_DIR/scripts/gmail-auth.py" "$GMAIL_OAUTH_PATH"
+    else
+      echo "  Skipped. Gmail sending disabled."
+      echo "  Run ./scripts/setup.sh --gmail later to set up."
+    fi
+  else
+    echo "  Gmail credentials found. Skipping."
+  fi
+
+  # ── 5b. Google Drive/Sheets auth ──
+  echo ""
+  echo "  --- Google Drive & Sheets API Setup ---"
+  if [ "$1" = "--google" ] || [ ! -f "$HOME/.gdrive-mcp/sheets-token.json" ]; then
+    echo "  (You can reuse the SAME OAuth client JSON from Gmail setup.)"
+    read -rp "  Path to OAuth client JSON for Drive/Sheets (or Enter to skip): " GDRIVE_OAUTH_PATH
+
+    if [ -n "$GDRIVE_OAUTH_PATH" ] && [ -f "$GDRIVE_OAUTH_PATH" ]; then
+      echo "  Running Google Drive & Sheets OAuth flow..."
+      python3 "$REPO_DIR/scripts/gdrive-auth.py" "$GDRIVE_OAUTH_PATH"
+    else
+      echo "  Skipped. Google Sheets disabled."
+      echo "  Run ./scripts/setup.sh --google later to set up."
+    fi
+  else
+    echo "  Google Drive/Sheets credentials found. Skipping."
+  fi
+else
+  echo "  Google credentials found. Skipping."
+  echo "  Run with --gmail or --google to reconfigure."
+fi
+
+# ── 6. Configure MCP servers for Google services ──
 echo ""
-echo "[6/7] Checking prerequisites..."
+echo "[6/8] Configuring MCP servers..."
+
+CLAUDE_JSON="$HOME/.claude.json"
+if [ -f "$HOME/.gdrive-mcp/sheets-token.json" ]; then
+  echo "  Google Sheets MCP: credentials ready at ~/.gdrive-mcp/"
+else
+  echo "  Google Sheets MCP: no credentials (skipped)"
+fi
+
+if [ -f "$HOME/.gmail-mcp/credentials.json" ]; then
+  echo "  Gmail MCP: credentials ready at ~/.gmail-mcp/"
+else
+  echo "  Gmail MCP: no credentials (skipped)"
+fi
+
+# ── 7. Check Claude CLI ──
+echo ""
+echo "[7/8] Checking prerequisites..."
 
 if command -v claude &>/dev/null; then
   CLAUDE_VER=$(claude --version 2>/dev/null || echo "unknown")
@@ -159,7 +253,7 @@ else
   echo "  WARNING: Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
 fi
 
-# ── 7. Playwright ──
+# ── 8. Playwright ──
 if npx playwright --version &>/dev/null 2>&1; then
   echo "  Playwright: installed"
 else
@@ -174,5 +268,10 @@ echo "  Setup complete!"
 echo ""
 echo "  Start the bot:  npm start"
 echo "  Dev mode:        npm run dev"
+echo ""
+echo "  Reconfigure later:"
+echo "    ./scripts/setup.sh --reconfigure  (env vars)"
+echo "    ./scripts/setup.sh --gmail        (Gmail API)"
+echo "    ./scripts/setup.sh --google       (Google Drive/Sheets)"
 echo "========================================="
 echo ""

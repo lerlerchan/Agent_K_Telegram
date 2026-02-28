@@ -18,7 +18,8 @@ session continuity, and returns responses.
 - Node.js 20+
 - Claude Code CLI (installed and authenticated)
 - Telegram Bot Token (from @BotFather)
-- Gmail account for the agent (recommended: create a dedicated one)
+- Google account for the agent (recommended: create a dedicated one)
+- Google Cloud project with OAuth credentials (for Gmail, Sheets, Drive)
 
 ## Quick Start
 
@@ -59,6 +60,27 @@ Copy `.env.example` to `.env` and fill in values. See `.env.example` for all ava
 - `TELEGRAM_BOT_TOKEN` — Bot token from @BotFather
 - `ALLOWED_CHAT_IDS` — Comma-separated chat IDs the bot responds in
 
+> **Important:** Disable **Group Privacy** for your bot so it can see all messages in groups (not just `/commands`). In @BotFather: `/mybots` → select bot → **Bot Settings** → **Group Privacy** → **Turn OFF**.
+
+**Optional:**
+- `TELEGRAM_GROUP_CHAT_ID` — Group chat ID for file delivery to groups
+- `TELEGRAM_DM_CHAT_ID` — Your personal chat ID for DM delivery
+
+#### How to get Telegram chat IDs
+
+**Your personal chat ID:**
+1. Message [@userinfobot](https://t.me/userinfobot) on Telegram
+2. It replies with your user ID (e.g. `123456789`)
+
+**Group chat ID:**
+1. Add the bot to your Telegram group
+2. Send any message in the group
+3. Send `/chatid` in the group — the bot will reply with the chat ID
+4. Group IDs are negative numbers (e.g. `-1001234567890`)
+5. Set `TELEGRAM_GROUP_CHAT_ID` in `.env` to this value
+
+> **Tip:** You can also add the group chat ID to `ALLOWED_CHAT_IDS` so the bot responds in that group.
+
 ### Skills
 
 Skills are Claude Code slash commands stored in `skills/`.
@@ -66,15 +88,49 @@ Run `./scripts/setup-skills.sh` to symlink them to `~/.claude/skills/`.
 
 New skills added to `skills/` are automatically available — no re-run needed.
 
-### Gmail Setup
+### Google Cloud Console Setup
 
-For email sending, you need Gmail API OAuth credentials:
+Gmail, Google Sheets, and Google Drive features all require a Google Cloud project with OAuth credentials.
 
-1. Create a Gmail account for your agent
-2. Go to console.cloud.google.com — create project — enable Gmail API
-3. Create OAuth 2.0 Desktop credentials — download JSON
-4. Run: `python3 scripts/gmail-auth.py path/to/client_secret.json`
-5. Log in with your agent's Gmail when the browser opens
+**1. Create a Google Cloud project:**
+- Go to [console.cloud.google.com](https://console.cloud.google.com)
+- Sign in with your agent's Google account (we recommend a dedicated account)
+- Click **Select a project** (top bar) > **New Project**
+- Name it (e.g. "Agent K") and click **Create**
+
+**2. Enable APIs:**
+- Go to **APIs & Services > Library**
+- Search and enable each API you need:
+  - **Gmail API** — for sending/reading emails
+  - **Google Sheets API** — for reading/writing spreadsheets
+  - **Google Drive API** — for listing/accessing Drive files
+
+**3. Configure OAuth consent screen:**
+- Go to **APIs & Services > OAuth consent screen**
+- Choose **External** > click **Create**
+- Fill in: App name, User support email, Developer email
+- Click **Save and Continue** through the Scopes page
+- On **Test users** page: click **Add Users** > add your agent's Gmail address
+- Click **Save and Continue** > **Back to Dashboard**
+
+**4. Create OAuth credentials:**
+- Go to **APIs & Services > Credentials**
+- Click **+ Create Credentials** > **OAuth Client ID**
+- Application type: **Desktop app**
+- Click **Create**, then **Download JSON**
+- Save the file somewhere accessible
+
+**5. Authenticate Gmail:**
+```bash
+python3 scripts/gmail-auth.py path/to/client_secret.json
+```
+Log in with your agent's Gmail when the browser opens. Tokens saved to `~/.gmail-mcp/`.
+
+**6. Authenticate Google Drive & Sheets:**
+```bash
+python3 scripts/gdrive-auth.py path/to/client_secret.json
+```
+You can reuse the same OAuth client JSON file. Tokens saved to `~/.gdrive-mcp/`.
 
 ### Claude Code Config
 
