@@ -10,7 +10,8 @@ for (const key of REQUIRED_ENV) {
 }
 
 const { Telegraf } = require('telegraf');
-const { runClaude, isComplexTask } = require('./claude-runner');
+const { runClaude, isComplexTask, shouldUseOllama, detectMcpServers } = require('./claude-runner');
+const { runOllama, isOllamaAvailable } = require('./ollama-runner');
 const { logMessage, getRecentMessages } = require('./database');
 const { isUserAllowed, splitMessage, markdownToHtml } = require('./utils');
 const express = require('express');
@@ -31,14 +32,18 @@ const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'];
 // Track users currently being processed to prevent duplicate spawns
 const processingUsers = new Map(); // userId -> { startTime, messageId, abort }
 
-// Helper: Resolve file path relative to workspace
+// Helper: Resolve file path relative to workspace (security: prevent path traversal)
 const resolvePath = (filePath) => {
   if (!filePath) return null;
+  const workspace = path.resolve(process.env.WORKSPACE_DIR || process.cwd());
   let resolved = filePath.trim();
-  if (!path.isAbsolute(resolved)) {
-    resolved = path.join(process.env.WORKSPACE_DIR, resolved);
+  // Always anchor to workspace, reject absolute user paths
+  resolved = path.resolve(workspace, resolved);
+  // Security: must stay inside workspace directory
+  if (!resolved.startsWith(workspace + path.sep) && resolved !== workspace) {
+    return null; // path traversal attempt detected
   }
-  return resolved.replace(/\//g, path.sep);
+  return resolved;
 };
 
 // Helper: Extract files from [SEND_IMAGE:] and [SEND_FILE:] tags
@@ -91,10 +96,17 @@ const sendResponse = async (telegram, chatId, response, userId) => {
   }
 };
 
-// Middleware: Only respond in allowed chats. Ignore everything else.
+// Middleware: Only respond in allowed chats and users. Ignore everything else.
 bot.use(async (ctx, next) => {
   const chatId = ctx.chat?.id;
   const chatType = ctx.chat?.type;
+  const userId = String(ctx.from?.id);
+
+  // Enforce user-level whitelist (ALLOWED_TELEGRAM_IDS)
+  if (!isUserAllowed(userId)) {
+    console.log(`[${new Date().toLocaleTimeString()}] ⛔ Ignored user ${userId} (not in ALLOWED_TELEGRAM_IDS)`);
+    return;
+  }
 
   // Only respond in allowed chats (from ALLOWED_CHAT_IDS env var)
   const allowedChats = (process.env.ALLOWED_CHAT_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
@@ -159,12 +171,25 @@ bot.command('status', async (ctx) => {
 bot.command('cd', (ctx) => {
   const newPath = ctx.message.text.slice(4).trim();
   if (!newPath) return ctx.reply(`Workspace: ${process.env.WORKSPACE_DIR}`);
-  if (fs.existsSync(newPath)) {
-    process.env.WORKSPACE_DIR = newPath;
-    ctx.reply(`✅ Changed to: ${newPath}`);
-  } else {
-    ctx.reply(`❌ Path not found`);
+
+  // Security: restrict /cd to allowed workspace roots only
+  const resolved = path.resolve(newPath);
+  const roots = (process.env.ALLOWED_WORKSPACE_ROOTS || process.env.WORKSPACE_DIR || '')
+    .split(',').map(r => path.resolve(r.trim())).filter(Boolean);
+
+  const isAllowed = roots.some(root => resolved.startsWith(root + path.sep) || resolved === root);
+  if (!isAllowed) {
+    ctx.reply(`❌ Path not allowed. Allowed directories: ${roots.join(', ')}`);
+    return;
   }
+
+  if (!fs.existsSync(resolved)) {
+    ctx.reply(`❌ Path not found`);
+    return;
+  }
+
+  process.env.WORKSPACE_DIR = resolved;
+  ctx.reply(`✅ Changed to: ${resolved}`);
 });
 
 bot.command('test', (ctx) => {
@@ -194,6 +219,7 @@ bot.command('sendfile', async (ctx) => {
   if (!file) return ctx.reply('Usage: /sendfile <filename>');
 
   const fullPath = resolvePath(file);
+  if (!fullPath) return ctx.reply(`❌ Access denied.`); // path traversal attempt
   if (!fs.existsSync(fullPath)) return ctx.reply(`❌ File not found`);
 
   const ext = path.extname(fullPath).toLowerCase();
@@ -230,8 +256,16 @@ bot.on('text', async (ctx) => {
   }
 
   const complex = isComplexTask(ctx.message.text);
-  console.log(`[${new Date().toLocaleTimeString()}] ⚙️  Processing for ${ctx.from?.username || userId}${complex ? ' [OPUS]' : ''}...`);
-  const msg = await ctx.reply(complex ? '🧠 Processing with Opus...' : '🤔 Processing...');
+  const ollamaOk = await isOllamaAvailable();
+  const mcpServers = detectMcpServers(ctx.message.text);
+  const useOllama = ollamaOk && shouldUseOllama(ctx.message.text, ollamaOk, mcpServers);
+
+  let statusMsg = '🤔 Processing...';
+  if (complex) statusMsg = '🧠 Processing with Opus...';
+  else if (useOllama) statusMsg = '🦙 Processing with Ollama...';
+
+  console.log(`[${new Date().toLocaleTimeString()}] ⚙️  Processing for ${ctx.from?.username || userId}${complex ? ' [OPUS]' : useOllama ? ' [OLLAMA]' : ''}...`);
+  const msg = await ctx.reply(statusMsg);
   const abort = new AbortController();
   let lastStatus = 'Thinking...';
   processingUsers.set(userId, { startTime: Date.now(), messageId: msg.message_id, abort });
@@ -252,40 +286,66 @@ bot.on('text', async (ctx) => {
     ).catch(() => {});
   }, 30000);
 
-  // Run Claude — awaited directly (not setImmediate) to prevent Telegraf re-queue
+  // Run Claude or Ollama — awaited directly (not setImmediate) to prevent Telegraf re-queue
   const startTime = Date.now();
   let prompt = ctx.message.text;
+
+  // Check for /ollama prefix to force Ollama routing
+  let forcedOllama = false;
+  if (prompt.startsWith('/ollama ')) {
+    forcedOllama = true;
+    prompt = prompt.slice(8).trim(); // Strip /ollama prefix
+  }
+
   try {
-    // Build prompt — include reply context if user replied to a bot message
-    const replied = ctx.message.reply_to_message;
-    if (replied?.from?.id === (await ctx.telegram.getMe()).id && replied?.text) {
-      const quoted = replied.text.slice(0, 500);
-      prompt = `[Replying to your message: "${quoted}"]\n\n${prompt}`;
+    // For Ollama, use simple prompt without context injection
+    let finalPrompt = prompt;
+
+    if (!forcedOllama && !useOllama) {
+      // Claude path — inject full context
+
+      // Build prompt — include reply context if user replied to a bot message
+      const replied = ctx.message.reply_to_message;
+      if (replied?.from?.id === (await ctx.telegram.getMe()).id && replied?.text) {
+        const quoted = replied.text.slice(0, 500);
+        prompt = `[Replying to your message: "${quoted}"]\n\n${prompt}`;
+      }
+
+      // Inject chat context so Claude knows where the message came from
+      const chatType = ctx.chat?.type; // 'private', 'group', or 'supergroup'
+      const isGroup = chatType === 'group' || chatType === 'supergroup';
+      const userName = ctx.from?.first_name || ctx.from?.username || 'Unknown';
+      const chatContext = isGroup
+        ? `[Chat context: Telegram GROUP chat ${chatId}. Send files/messages to GROUP $TELEGRAM_GROUP_CHAT_ID]\n[User: ${userName} (ID: ${userId})]`
+        : `[Chat context: Telegram DM (private) chat ${chatId}. Send files/messages to DM $TELEGRAM_DM_CHAT_ID]\n[User: ${userName} (ID: ${userId})]`;
+
+      // Always inject recent history — every message is a fresh Claude process
+      const recent = getRecentMessages(userId, 10);
+      if (recent.length > 0) {
+        const history = recent.map(m => {
+          const time = new Date(m.created_at).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', hour: '2-digit', minute: '2-digit' });
+          const userMsg = (m.user_message || '').slice(0, 200);
+          const botMsg = (m.bot_response || '').slice(0, 300);
+          return `[${time}] User: ${userMsg}\n[${time}] Bot: ${botMsg}`;
+        }).join('\n\n');
+        finalPrompt = `${chatContext}\n[Recent conversation history for context]\n${history}\n\n---\n[Current message]\n${prompt}`;
+      } else {
+        finalPrompt = `${chatContext}\n${prompt}`;
+      }
     }
 
-    // Inject chat context so Claude knows where the message came from
-    const chatType = ctx.chat?.type; // 'private', 'group', or 'supergroup'
-    const isGroup = chatType === 'group' || chatType === 'supergroup';
-    const userName = ctx.from?.first_name || ctx.from?.username || 'Unknown';
-    const chatContext = isGroup
-      ? `[Chat context: Telegram GROUP chat ${chatId}. Send files/messages to GROUP $TELEGRAM_GROUP_CHAT_ID]\n[User: ${userName} (ID: ${userId})]`
-      : `[Chat context: Telegram DM (private) chat ${chatId}. Send files/messages to DM $TELEGRAM_DM_CHAT_ID]\n[User: ${userName} (ID: ${userId})]`;
-
-    // Always inject recent history — every message is a fresh Claude process
-    const recent = getRecentMessages(userId, 10);
-    if (recent.length > 0) {
-      const history = recent.map(m => {
-        const time = new Date(m.created_at).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', hour: '2-digit', minute: '2-digit' });
-        const userMsg = (m.user_message || '').slice(0, 200);
-        const botMsg = (m.bot_response || '').slice(0, 300);
-        return `[${time}] User: ${userMsg}\n[${time}] Bot: ${botMsg}`;
-      }).join('\n\n');
-      prompt = `${chatContext}\n[Recent conversation history for context]\n${history}\n\n---\n[Current message]\n${prompt}`;
+    // Route to Claude or Ollama
+    let result;
+    if (forcedOllama || useOllama) {
+      // Use Ollama (simple prompt only)
+      result = await runOllama(finalPrompt, { onProgress, signal: abort.signal });
+      if (process.env.SHOW_MODEL_FOOTER === 'true') {
+        result.response += `\n\n---\n*[Answered by: ${result.model} via Ollama]*`;
+      }
     } else {
-      prompt = `${chatContext}\n${prompt}`;
+      // Use Claude (with full context)
+      result = await runClaude(finalPrompt, { onProgress, signal: abort.signal });
     }
-
-    const result = await runClaude(prompt, { onProgress, signal: abort.signal });
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(`[${new Date().toLocaleTimeString()}] ✅ Reply to ${ctx.from?.username || userId} (${elapsed}s, ${result.response.length} chars)`);

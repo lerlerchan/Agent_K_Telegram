@@ -1,6 +1,40 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+---
+
 # Agent K — Telegram Bot (Claude Code Interface)
 
 A Telegram bot that acts as a conversational interface to the Claude Code CLI. Users send messages via Telegram; the bot forwards them to Claude, maintains session continuity, and returns responses. It also supports media uploads, file delivery, and web search via Playwright.
+
+---
+
+## Development Commands
+
+```bash
+# Install dependencies
+npm install
+
+# Run in development (auto-restart on file changes)
+npm run dev
+
+# Run in production
+npm start
+
+# Windows batch scripts
+start-agent-k.bat          # Start the bot
+stop-agent-k.bat           # Stop the bot
+
+# Initial setup (interactive)
+./scripts/setup.sh
+
+# Symlink skills to ~/.claude/skills/ (auto-run by setup.sh)
+./scripts/setup-skills.sh
+
+# Set up Gmail OAuth tokens
+python3 scripts/gmail-auth.py path/to/client_secret.json
+```
 
 ---
 
@@ -159,15 +193,110 @@ Skills are Claude Code slash commands stored in `skills/`. They are symlinked to
 
 ---
 
+## Architecture Deep Dive
+
+### Request Flow
+
+```
+Telegram User Message
+         |
+         v
+     Telegraf middleware (auth + filtering)
+         |
+         v
+     Message Handler
+      /    |    \
+     /     |     \
+  Text   Photo  Document
+    |      |       |
+    +------+-------+
+           |
+           v
+   detectMcpServers()  [checks keywords to load only needed MCP servers]
+           |
+           v
+   isComplexTask()     [checks patterns to decide Haiku vs Opus]
+           |
+           v
+   runClaude()         [spawns Claude CLI with --resume flag]
+           |
+           v
+   Parse JSON output → Extract [SEND_IMAGE:] and [SEND_FILE:] tags
+           |
+           v
+   sendResponse()      [splits markdown, converts to HTML, sends via Telegram]
+           |
+           v
+   logMessage()        [audit log to SQLite + daily logs/activity/YYYY-MM-DD.log]
+```
+
+### Key Components
+
+- **[index.js](src/index.js)** — Telegraf setup, middleware, command handlers, response formatting
+  - `processingUsers` Map prevents concurrent requests per user (auto-clears after 30 min)
+  - File tag extraction: `[SEND_IMAGE: path]` and `[SEND_FILE: path]` trigger media sends
+  - Markdown → HTML conversion for Telegram formatting
+
+- **[claude-runner.js](src/claude-runner.js)** — Claude CLI spawning and session management
+  - `detectMcpServers()` — loads MCP servers (Playwright, Gmail, Chrome DevTools) only when keywords match
+  - `isComplexTask()` — pattern-based detection to use Opus for browser automation and multi-step workflows
+  - `buildSystemContext()` — injects memory from ~/.claude/memory/ into Claude prompt
+  - Session IDs stored in SQLite, resumed with `--resume` flag to maintain continuity
+  - Logs to `logs/activity/YYYY-MM-DD.log` with timestamps
+
+- **[database.js](src/database.js)** — SQLite via better-sqlite3
+  - `sessions` table — per-user Claude session IDs + MCP keys + last activity timestamp
+  - `audit_log` table — all user messages and bot responses (for audit trail)
+  - 15-minute session TTL — sessions auto-expire on inactivity
+  - WAL mode for concurrent write safety
+
+- **[utils.js](src/utils.js)** — Helpers for auth, splitting, formatting
+  - User/chat whitelist validation
+  - Message splitting (Telegram 4096 char limit)
+  - Markdown table reformatting for readability in Telegram
+
+### Skills System
+
+Skills are Claude Code slash commands stored in `skills/`. Each skill is a directory with a `SKILL.md` file defining:
+
+```yaml
+---
+name: skill-name
+description: What this skill does
+---
+[Markdown body with workflow/rules/arguments]
+```
+
+- Symlinked to `~/.claude/skills/` via `scripts/setup-skills.sh`
+- New skills in `skills/` are automatically available (no re-run needed)
+- Skills are invoked via Claude's `/skill-name` syntax in the bot message
+- Example: `/git-push` — commit and push to GitHub with PAT auth
+
+### Environment & Configuration
+
+**Critical .env vars:**
+- `TELEGRAM_BOT_TOKEN` — required, from @BotFather
+- `ALLOWED_CHAT_IDS` — comma-separated IDs; bot only responds in these chats
+- `WORKSPACE_DIR` — directory where Claude operates on files
+- `WEBHOOK_URL` — optional HTTPS URL for webhook mode (falls back to polling)
+
+**Company/Bank/Email vars** — used by `/hr-payroll`, `/issue-invoice`, `/send-email` skills
+
+**Google Cloud OAuth** — Gmail/Sheets/Drive skills need OAuth tokens in `~/.gmail-mcp/`, `~/.gdrive-mcp/`
+
+---
+
 ## Logs Directory
 
 The `logs/` folder is **git-ignored** and created automatically at runtime. Do not commit it.
 
 ```
 logs/
-├── activity/     # Daily activity logs — format: YYYY-MM-DD.log
+├── activity/     # Daily activity logs — format: YYYY-MM-DD.log (rotation: one per day)
 └── history/      # Per-user conversation exports — format: <userId>-history.log
 ```
+
+Activity logs contain timestamped entries: `[HH:MM:SS] [LEVEL] message`
 
 ---
 

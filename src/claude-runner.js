@@ -79,6 +79,27 @@ function isComplexTask(message) {
   return false;
 }
 
+// Patterns for simple tasks that can use cheap local LLM (Ollama)
+const SIMPLE_PATTERNS = [
+  /^(hi|hello|hey|good\s*(morning|afternoon|evening))[.!?]?$/i,
+  /what('?s| is) (the time|today|the date|the weather)/i,
+  /translate|in (malay|chinese|mandarin|bahasa|spanish|french|german)/i,
+  /what does .{1,40} mean/i,
+  /calculate|how much is \d|what is \d.*\d/i,
+  /define |what is a |explain briefly|summarize in one sentence/i,
+  /^(thanks|thank you|ok|okay|got it|noted)[.!?]?$/i,
+  /^(yes|no|true|false)[.!?]?$/i,
+];
+
+function shouldUseOllama(message, ollamaAvailable, mcpServers) {
+  if (!ollamaAvailable) return false;                // Ollama not available
+  if (isComplexTask(message)) return false;          // Complex = use Claude
+  if (mcpServers.playwright) return false;           // Browser automation = Claude
+  if (/^\/[a-z-]+\s/i.test(message)) return false;  // Skills (/skill-name) = Claude
+  if (process.env.OLLAMA_DEFAULT === 'true') return true; // Educator opt-in for all simple tasks
+  return SIMPLE_PATTERNS.some(p => p.test(message.trim())); // Match simple patterns
+}
+
 // Parse a stream-json event into a short, meaningful status (< 10 words)
 const TOOL_LABELS = {
   Read: 'Reading file',
@@ -167,9 +188,17 @@ const runClaude = (message, { onProgress, signal } = {}) => {
 
     args.push(message);
 
-    const env = { ...process.env, HOME: process.env.HOME };
-    delete env.CLAUDECODE;
-    delete env.TERM_PROGRAM;
+    // Build a minimal allowlist of safe environment variables (security: don't leak secrets to child process)
+    const SAFE_ENV_KEYS = [
+      'HOME', 'PATH', 'SHELL', 'LANG', 'LANGUAGE', 'TERM', 'USER', 'TMPDIR', 'TMP', 'TEMP',
+      'WORKSPACE_DIR', 'CI', 'NODE_ENV',
+      // Claude CLI specific
+      'ANTHROPIC_API_KEY', 'CLAUDE_CODE_USE_BEDROCK', 'AWS_REGION',
+    ];
+    const env = {};
+    for (const key of SAFE_ENV_KEYS) {
+      if (process.env[key] !== undefined) env[key] = process.env[key];
+    }
     env.CI = '1';
 
     if (serverCount > 0) {
@@ -342,4 +371,4 @@ const runClaude = (message, { onProgress, signal } = {}) => {
   });
 };
 
-module.exports = { runClaude, isComplexTask, detectMcpServers };
+module.exports = { runClaude, isComplexTask, detectMcpServers, shouldUseOllama };
