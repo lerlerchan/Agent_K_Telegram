@@ -13,6 +13,57 @@ session continuity, and returns responses.
 - Smart MCP loading (Playwright, Gmail, Chrome DevTools)
 - 13 built-in skills (invoicing, HR contracts, email, spreadsheets, etc.)
 
+## Hardware Requirements
+
+Agent K has two deployment tiers depending on which features you need:
+
+| Tier | What's included |
+|------|-----------------|
+| **Core** | Telegram ↔ Claude message relay only. No Playwright, no PDF/Office skills. |
+| **Full stack** | Core + Playwright browser automation, Gmail/Drive, PDF/Word/Excel/PowerPoint skills. |
+
+### Minimum Specs by Platform
+
+| Platform | Tier | CPU | RAM | Disk | OS Version |
+|----------|------|-----|-----|------|------------|
+| Mac Mini / MacBook | Core | 2-core Apple Silicon or Intel | 4 GB | 5 GB | macOS 12+ |
+| Mac Mini / MacBook | Full | 2-core Apple Silicon or Intel | 8 GB | 10 GB | macOS 12+ |
+| Windows laptop | Core | 2-core x64 | 4 GB | 5 GB | Win 10 21H2+ (64-bit) |
+| Windows laptop | Full | 4-core x64 | 8 GB | 15 GB* | Win 10 21H2+ |
+| Ubuntu / Linux | Core | 2-core x64 | 2 GB | 5 GB | Ubuntu 20.04+ |
+| Ubuntu / Linux | Full | 4-core x64 | 4 GB | 10 GB | Ubuntu 20.04+ |
+| Docker (any host) | Full | 2 vCPU | 4 GB allocated | 10 GB | Docker Desktop 4.x+ |
+
+\* Windows disk is higher due to WSL2 + Visual C++ Build Tools overhead.
+
+**Disk space breakdown:** Node.js 20 (~160 MB) + node_modules without Playwright (~200 MB) + Playwright Chromium binary (~1.1 GB) + Claude CLI (~300 MB) + SQLite DB and logs (~50 MB) + workspace buffer (1–5 GB).
+
+### Per-Platform Setup Notes
+
+**macOS**
+- Install Node 20 via `brew install node@20` or `nvm install 20`
+- Full Disk Access may be required for the Node.js process (System Settings → Privacy & Security → Full Disk Access)
+- `PLAYWRIGHT_CHROME_PATH` is auto-detected; no manual config needed in most cases
+
+**Windows (native, no WSL)**
+- Requires Visual C++ Build Tools for `better-sqlite3` native compilation — install via `npm install --global windows-build-tools` or [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
+- Install Node.js v20 LTS from [nodejs.org](https://nodejs.org)
+- Use `start-agent-k.bat` / `stop-agent-k.bat` for process management
+- Set `PLAYWRIGHT_CHROME_PATH` manually if Chrome is not in the standard install path
+
+**Ubuntu / Linux**
+- Install build tools: `sudo apt install build-essential python3`
+- Install Node 20 via `nvm` or the NodeSource PPA
+- Playwright system library dependencies (26 packages) are installed automatically via `npx playwright install --with-deps chromium`
+
+**Docker (recommended for consistency)**
+- The included Dockerfile bundles all 26 system libraries, Claude CLI, and Playwright Chromium — no host-side setup needed
+- Works identically on Mac, Windows, and Linux hosts
+- Allocate ≥ 4 GB RAM in Docker Desktop settings (Resources → Memory)
+- Run with: `docker run -d --env-file .env agent-k`
+
+> **Docker as a leveller:** If you're on an old Windows laptop or any non-Linux machine, running Agent K via Docker is the most reliable path to a working full-stack deployment. The Dockerfile handles all platform-specific system dependencies so you don't have to.
+
 ## Prerequisites
 
 - Node.js 20+
