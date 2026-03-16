@@ -92,6 +92,7 @@ const SIMPLE_PATTERNS = [
 ];
 
 function shouldUseOllama(message, ollamaAvailable, mcpServers) {
+  if (process.env.OLLAMA_ONLY === 'true') return true;  // Force all tasks to Ollama (bypasses availability check)
   if (!ollamaAvailable) return false;                // Ollama not available
   if (isComplexTask(message)) return false;          // Complex = use Claude
   if (mcpServers.playwright) return false;           // Browser automation = Claude
@@ -226,6 +227,9 @@ const runClaude = (message, { onProgress, signal } = {}) => {
     let lastOutputTime = Date.now();
     // Accumulate token usage across all turns
     let totalUsage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+    // Rate limit tracking
+    let rateLimitRejected = false;
+    let rateLimitResetsAt = null;
 
     // 30 minute hard timeout
     const timeout = setTimeout(() => {
@@ -278,6 +282,23 @@ const runClaude = (message, { onProgress, signal } = {}) => {
           const ev = JSON.parse(trimmed);
           if (ev.type === 'result') {
             resultEvent = ev;
+            // Detect rate limit in result error
+            if (ev.is_error) {
+              const errText = JSON.stringify(ev).toLowerCase();
+              if (/credit|rate.limit|402|429|billing/.test(errText)) {
+                rateLimitRejected = true;
+                logToFile('WARN', `Rate limit detected in result event`);
+              }
+            }
+          }
+          // Detect rate limit rejection events
+          if (ev.type === 'rate_limit_event') {
+            const info = ev.rate_limit_info || {};
+            if (info.status === 'rejected') {
+              rateLimitRejected = true;
+              rateLimitResetsAt = info.resetsAt || null;
+              logToFile('WARN', `Rate limit rejected: type=${info.rateLimitType} resetsAt=${info.resetsAt}`);
+            }
           }
           // Accumulate token usage from assistant events
           const usage = ev.message?.usage || ev.usage;
@@ -305,6 +326,19 @@ const runClaude = (message, { onProgress, signal } = {}) => {
       if (killed) return;
 
       logToFile('EXIT', `Claude exited code=${code} | stdout=${stdout.length} chars | stderr=${stderr.length} chars`);
+
+      // Detect rate limit / credit exhaustion
+      const stderrRateLimit = /402|429|out.of.credit|rate.limit|credit.balance|billing/i.test(stderr);
+      if (rateLimitRejected || (code !== 0 && stderrRateLimit)) {
+        const resetMsg = rateLimitResetsAt
+          ? ` Resets at ${new Date(rateLimitResetsAt * 1000).toLocaleTimeString()}.`
+          : '';
+        logToFile('WARN', `Claude rate limited.${resetMsg}`);
+        const err = new Error(`Claude usage limit reached.${resetMsg}`);
+        err.isRateLimit = true;
+        err.resetsAt = rateLimitResetsAt;
+        return reject(err);
+      }
 
       if (code !== 0 && !resultEvent) {
         logToFile('ERROR', `Non-zero exit. stderr: ${stderr.slice(0, 1000)}`);

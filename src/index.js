@@ -258,7 +258,7 @@ bot.on('text', async (ctx) => {
   const complex = isComplexTask(ctx.message.text);
   const ollamaOk = await isOllamaAvailable();
   const mcpServers = detectMcpServers(ctx.message.text);
-  const useOllama = ollamaOk && shouldUseOllama(ctx.message.text, ollamaOk, mcpServers);
+  const useOllama = shouldUseOllama(ctx.message.text, ollamaOk, mcpServers);
 
   let statusMsg = '🤔 Processing...';
   if (complex) statusMsg = '🧠 Processing with Opus...';
@@ -271,7 +271,7 @@ bot.on('text', async (ctx) => {
   processingUsers.set(userId, { startTime: Date.now(), messageId: msg.message_id, abort });
 
   const onProgress = (status) => {
-    if (status) lastStatus = status;
+    if (status) lastStatus = typeof status === 'string' ? status : 'Thinking...';
   };
 
   // Progress: update message with elapsed time + status every 30s
@@ -334,13 +334,19 @@ bot.on('text', async (ctx) => {
       }
     }
 
-    // Route to Claude or Ollama
+    // Route to Ollama (with Claude fallback) or Claude directly
     let result;
     if (forcedOllama || useOllama) {
-      // Use Ollama (simple prompt only)
-      result = await runOllama(finalPrompt, { onProgress, signal: abort.signal });
-      if (process.env.SHOW_MODEL_FOOTER === 'true') {
-        result.response += `\n\n---\n*[Answered by: ${result.model} via Ollama]*`;
+      try {
+        result = await runOllama(finalPrompt, { onProgress, signal: abort.signal });
+        if (process.env.SHOW_MODEL_FOOTER === 'true') {
+          result.response += `\n\n---\n*[Answered by: ${result.model} via Ollama]*`;
+        }
+      } catch (ollamaErr) {
+        if (abort.signal.aborted || ollamaErr.message === 'Request cancelled') throw ollamaErr;
+        console.log(`[${new Date().toLocaleTimeString()}] ⚠️  Ollama failed (${ollamaErr.message}), falling back to Claude...`);
+        // Fall back to Claude — rate limit errors will propagate to outer catch
+        result = await runClaude(finalPrompt, { onProgress, signal: abort.signal });
       }
     } else {
       // Use Claude (with full context)
@@ -359,7 +365,14 @@ bot.on('text', async (ctx) => {
     // Log failed/cancelled requests to audit_log too
     await logMessage(userId, prompt, `[ERROR after ${elapsed}s] ${e.message}`);
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
-    if (e.message !== 'Request cancelled') {
+    if (e.isRateLimit) {
+      const resetInfo = e.resetsAt
+        ? `\n\nService resets at ${new Date(e.resetsAt * 1000).toLocaleTimeString()}.`
+        : '';
+      await ctx.telegram.sendMessage(chatId,
+        `🤖 I'm temporarily unavailable.\n\nThe AI service has reached its usage limit.${resetInfo}\n\nPlease try again later.`
+      );
+    } else if (e.message !== 'Request cancelled') {
       await ctx.telegram.sendMessage(chatId, `❌ Error: ${e.message}`);
     }
   } finally {
@@ -393,7 +406,7 @@ const handleMedia = async (ctx, getFile, prompt) => {
   processingUsers.set(userId, { startTime: Date.now(), messageId: msg.message_id, abort });
 
   const onProgress = (status) => {
-    if (status) lastStatus = status;
+    if (status) lastStatus = typeof status === 'string' ? status : 'Thinking...';
   };
 
   const progressInterval = setInterval(async () => {
@@ -435,7 +448,12 @@ const handleMedia = async (ctx, getFile, prompt) => {
     console.log(`[${new Date().toLocaleTimeString()}] ❌ Media error for ${ctx.from?.username || userId} (${elapsed}s): ${e.message}`);
     await logMessage(userId, prompt, `[ERROR after ${elapsed}s] ${e.message}`);
     await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
-    if (e.message !== 'Request cancelled') {
+    if (e.isRateLimit) {
+      const resetInfo = e.resetsAt
+        ? `\n\nService resets at ${new Date(e.resetsAt * 1000).toLocaleTimeString()}.`
+        : '';
+      await ctx.reply(`🤖 I'm temporarily unavailable.\n\nThe AI service has reached its usage limit.${resetInfo}\n\nPlease try again later.`);
+    } else if (e.message !== 'Request cancelled') {
       await ctx.reply(`❌ ${e.message}`);
     }
   } finally {
