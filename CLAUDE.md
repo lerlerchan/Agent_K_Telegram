@@ -183,10 +183,23 @@ Skills are Claude Code slash commands stored in `skills/`. They are symlinked to
 | `/send-file` | send file | Deliver files via Telegram |
 | `/send-telegram` | send telegram | Send Telegram messages |
 | `/word` | Word document | Word document operations via MCP |
+| `/web-search` | search, google, look up, find info, what is, latest news | Search the web via DuckDuckGo MCP and return live results |
 | `/flight-checkin` | check in, boarding pass | Online flight check-in via Playwright |
 | `/mac-setup` | set up Mac, auto-login | Headless Mac Mini setup guide for Agent K |
 
 **Adding new skills:** Create a directory in `skills/` with a `SKILL.md` file. It will be automatically available via the whole-directory symlink.
+
+## Live Web Search (Important)
+
+**NEVER answer questions about current events, news, prices, or anything time-sensitive from training data alone.**
+
+A DuckDuckGo MCP server (`duckduckgo`) is available. Use it proactively whenever the user asks about:
+- Latest news, current events, recent developments
+- Prices, exchange rates, stock values
+- "What is X", "Who is X", "When did X happen"
+- Anything that may have changed since your training cutoff
+
+**How to search:** Use the `duckduckgo` MCP tool directly, or trigger the `/web-search` skill. Always search first, then answer based on the live results. Never say "my knowledge cutoff is X" — just search instead.
 
 ---
 

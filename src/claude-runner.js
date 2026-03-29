@@ -38,6 +38,13 @@ const MCP_SERVERS = {
       command: 'npx',
       args: ['@gongrzhe/server-gmail-autoauth-mcp']
     }
+  },
+  duckduckgo: {
+    keywords: ['search', 'google', 'look up', 'find info', 'latest news', 'current', 'today', 'recent', 'what is', 'who is', 'price of', 'news', 'internet', 'online', 'real-time', 'real time', 'live'],
+    config: {
+      command: '/home/lerler/.nvm/versions/node/v20.20.1/bin/duckduckgo-mcp',
+      args: []
+    }
   }
 };
 
@@ -96,6 +103,7 @@ function shouldUseOllama(message, ollamaAvailable, mcpServers) {
   if (!ollamaAvailable) return false;                // Ollama not available
   if (isComplexTask(message)) return false;          // Complex = use Claude
   if (mcpServers.playwright) return false;           // Browser automation = Claude
+  if (mcpServers.duckduckgo) return false;           // Web search = Claude (Ollama has no search tools)
   if (/^\/[a-z-]+\s/i.test(message)) return false;  // Skills (/skill-name) = Claude
   if (process.env.OLLAMA_DEFAULT === 'true') return true; // Educator opt-in for all simple tasks
   return SIMPLE_PATTERNS.some(p => p.test(message.trim())); // Match simple patterns

@@ -1,49 +1,35 @@
 ---
 name: web-search
-description: Search the web using Playwright. Triggers on: search the web, look up, find info, google, research, what is, latest news on, find articles about
+description: Search the web using DuckDuckGo MCP for live results. Triggers on: search the web, look up, find info, google, research, what is, latest news on, find articles about, current events, recent news
 ---
 
 # Web Search Skill
 
-Search the web via Google (with DuckDuckGo fallback) and return a concise summary with source links.
+Search the web via the `duckduckgo` MCP server and return a concise summary with source links.
 
 ## Trigger phrases
 - "search for ...", "search: ...", "google ..."
 - "look up ...", "find info on ..."
 - "research ...", "what is ..."
 - "latest news on ...", "find articles about ..."
+- "what happened with ...", "current price of ..."
 
 ## Workflow
 
-1. **Navigate to Google**
-   ```
-   browser_navigate https://www.google.com
-   ```
+### Primary: DuckDuckGo MCP (preferred — fast, no browser needed)
 
-2. **Type the search query**
-   - Use `browser_type` to enter the query into the search input (`textarea[name="q"]` or `input[name="q"]`)
-   - Press Enter or click the Search button
+Use the `duckduckgo` MCP tool directly:
+1. Call the `search` tool from the `duckduckgo` MCP server with the user's query
+2. Parse the results — each result has a title, URL, and snippet
+3. Synthesize a 2–4 sentence summary
+4. List the top sources
 
-3. **Wait for results**
-   ```
-   browser_wait_for_load_state networkidle
-   ```
+### Fallback: Playwright browser (if MCP is unavailable)
 
-4. **Handle news/latest queries**
-   - If the query includes "latest", "news", "today", or "recent", click **Tools → Past week** to filter results
-
-5. **Snapshot the results page**
-   ```
-   browser_snapshot
-   ```
-
-6. **Extract top 5 results**
-   - From the snapshot, identify organic (non-sponsored) results
-   - For each result, capture: title, URL, and snippet
-
-7. **Synthesize and respond**
-   - Write a 2–4 sentence summary of the findings
-   - Follow with a numbered source list
+1. Navigate to `https://duckduckgo.com/?q=<query>`
+2. Wait for results to load
+3. Snapshot the page
+4. Extract top 5 organic results (title, URL, snippet)
 
 ## Output format
 
@@ -54,15 +40,12 @@ Sources:
 1. [Title](URL)
 2. [Title](URL)
 3. [Title](URL)
-4. [Title](URL)
-5. [Title](URL)
 ```
 
 ## Rules
 
-- Always start with a fresh navigation to Google — do not reuse a previous tab's state
+- **Always search** — never answer current-events questions from training data alone
+- Prefer the DuckDuckGo MCP tool over Playwright (faster, more reliable)
 - Skip sponsored/ad results; prefer organic results
-- If Google shows a CAPTCHA or blocks the request, fall back to `https://duckduckgo.com/?q=<query>`
-- Do not visit more than 2 individual result pages — the results page snapshot is sufficient for most queries
-- If the user asks for a specific page (e.g. "open the first result"), navigate to it and take a snapshot before summarising
 - Keep the summary factual and attributed — do not add opinions
+- If the user asks for a specific page, navigate to it for a deeper summary
