@@ -1,0 +1,42 @@
+TELEGRAM_BOT_TOKEN=YOUR_VALUE_HERE
+ALLOWED_TELEGRAM_IDS=YOUR_VALUE_HERE
+ALLOWED_CHAT_IDS=YOUR_VALUE_HERE
+WORKSPACE_DIR=YOUR_VALUE_HERE
+DB_PATH=YOUR_VALUE_HERE
+COMPANY_NAME=YOUR_VALUE_HERE
+COMPANY_REG=YOUR_VALUE_HERE
+COMPANY_SST_NO=YOUR_VALUE_HERE
+COMPANY_ADDRESS=YOUR_VALUE_HERE
+COMPANY_CONTACT_NAME=YOUR_VALUE_HERE
+COMPANY_CONTACT_TITLE=YOUR_VALUE_HERE
+COMPANY_EMAIL=YOUR_VALUE_HERE
+BANK_NAME=YOUR_VALUE_HERE
+BANK_ACCT_NAME=YOUR_VALUE_HERE
+BANK_ACCT_NO=YOUR_VALUE_HERE
+FROM_NAME=YOUR_VALUE_HERE
+FROM_EMAIL=YOUR_VALUE_HERE
+CC_EMAILS=YOUR_VALUE_HERE
+TELEGRAM_GROUP_CHAT_ID=YOUR_VALUE_HERE
+TELEGRAM_DM_CHAT_ID=YOUR_VALUE_HERE
+PLAYWRIGHT_CHROME_PATH=YOUR_VALUE_HERE
+OLLAMA_ONLY=YOUR_VALUE_HERE
+OLLAMA_BASE_URL=YOUR_VALUE_HERE
+OLLAMA_MODELS=YOUR_VALUE_HERE
+OLLAMA_DEFAULT=YOUR_VALUE_HERE
+SHOW_MODEL_FOOTER=YOUR_VALUE_HERE
+ALLOWED_WORKSPACE_ROOTS=YOUR_VALUE_HERE
+TOKEN_ROTATED_AT=YOUR_VALUE_HERE
+# Telegram Bot
+# Security - Comma-separated Telegram user IDs allowed to use the bot (leave empty to allow all)
+# Allowed chat IDs - bot only responds in these chats (comma-separated)
+# Working directory for Claude Code (where files are created/modified)
+# Database
+# Company / Issuer (do NOT include country in address — build_contract.py appends ", Malaysia")
+# Bank
+# Email
+# Telegram Routing
+# Browser (optional — Playwright auto-detects if not set)
+# Ollama — Local LLM backend
+# OLLAMA_MODEL=phi4-mini-reasoning:latest  # legacy fallback
+# Security — Workspace restrictions
+# Security: track token rotation age (update when you rotate via @BotFather)

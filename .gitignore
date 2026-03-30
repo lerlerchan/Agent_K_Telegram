@@ -32,3 +32,4 @@ credentials/
 # Activity logs and conversation history (runtime generated)
 logs/activity/
 logs/history/
+backup/claude-config/env.example.bak
