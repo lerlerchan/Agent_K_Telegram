@@ -9,6 +9,92 @@ for (const key of REQUIRED_ENV) {
   }
 }
 
+// ── Security checks at startup ────────────────────────────────────────────────
+(function runSecurityChecks() {
+  const { execSync, spawnSync } = require('child_process');
+  const fs = require('fs'), path = require('path');
+  const WARN = (msg) => console.warn(`[SECURITY ⚠️ ] ${msg}`);
+  const OK   = (msg) => console.log(`[SECURITY ✅] ${msg}`);
+
+  // 1. ALLOWED_TELEGRAM_IDS must be set in production
+  const ids = (process.env.ALLOWED_TELEGRAM_IDS || '').trim();
+  if (!ids) {
+    WARN('ALLOWED_TELEGRAM_IDS is not set — bot will respond to ANY Telegram user!');
+    WARN('Set ALLOWED_TELEGRAM_IDS=your_telegram_id in .env to restrict access.');
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[SECURITY ❌] Refusing to start in production without ALLOWED_TELEGRAM_IDS. Set it in .env.');
+      process.exit(1);
+    }
+  } else {
+    OK(`ALLOWED_TELEGRAM_IDS set (${ids.split(',').length} user(s) whitelisted)`);
+  }
+
+  // 2. .env file permissions — warn if readable by group or others
+  const envPath = path.resolve(__dirname, '..', '.env');
+  try {
+    const stat = fs.statSync(envPath);
+    const mode = stat.mode & 0o777;
+    if (mode & 0o077) {
+      WARN(`.env is world/group readable (mode ${mode.toString(8)}). Run: chmod 600 .env`);
+    } else {
+      OK('.env permissions are secure (600)');
+    }
+  } catch { /* .env not found — dotenv will have already warned */ }
+
+  // 3. Token rotation age — warn if TOKEN_ROTATED_AT is old or unset
+  const rotatedAt = process.env.TOKEN_ROTATED_AT;
+  if (!rotatedAt) {
+    WARN('TOKEN_ROTATED_AT not set in .env. Add it (e.g. TOKEN_ROTATED_AT=2026-03-30) to track rotation age.');
+  } else {
+    const days = Math.floor((Date.now() - new Date(rotatedAt).getTime()) / 86400000);
+    if (days > 90) {
+      WARN(`Telegram bot token is ${days} days old (last rotated: ${rotatedAt}). Consider rotating via @BotFather.`);
+    } else {
+      OK(`Token rotation age: ${days} day(s) (rotated: ${rotatedAt})`);
+    }
+  }
+
+  // 4. npm audit — run weekly in background, log results
+  const auditFlagFile = path.resolve(__dirname, '..', 'logs', '.last-npm-audit');
+  const AUDIT_INTERVAL_DAYS = 7;
+  let runAudit = true;
+  try {
+    const last = fs.readFileSync(auditFlagFile, 'utf8').trim();
+    const daysSince = (Date.now() - new Date(last).getTime()) / 86400000;
+    if (daysSince < AUDIT_INTERVAL_DAYS) {
+      OK(`npm audit last ran ${Math.floor(daysSince)} day(s) ago (next in ${AUDIT_INTERVAL_DAYS - Math.floor(daysSince)} day(s))`);
+      runAudit = false;
+    }
+  } catch { /* flag file missing — run audit */ }
+
+  if (runAudit) {
+    console.log('[SECURITY 🔍] Running npm audit in background...');
+    const child = require('child_process').spawn('npm', ['audit', '--json'], {
+      cwd: path.resolve(__dirname, '..'),
+      stdio: ['ignore', 'pipe', 'ignore'],
+      detached: true,
+    });
+    let out = '';
+    child.stdout.on('data', d => out += d);
+    child.on('close', (code) => {
+      try {
+        const report = JSON.parse(out);
+        const vulns = report.metadata?.vulnerabilities || {};
+        const total = (vulns.critical || 0) + (vulns.high || 0) + (vulns.moderate || 0) + (vulns.low || 0);
+        const logDir = path.resolve(__dirname, '..', 'logs');
+        if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+        if (total === 0) {
+          console.log('[SECURITY ✅] npm audit: 0 vulnerabilities found');
+        } else {
+          console.warn(`[SECURITY ⚠️ ] npm audit: ${total} vulnerabilities (critical:${vulns.critical||0} high:${vulns.high||0} moderate:${vulns.moderate||0} low:${vulns.low||0}). Run: npm audit fix`);
+        }
+        fs.writeFileSync(auditFlagFile, new Date().toISOString());
+      } catch { /* audit output not parseable */ }
+    });
+    child.unref();
+  }
+})();
+
 const { Telegraf } = require('telegraf');
 const { runClaude, isComplexTask, shouldUseOllama, detectMcpServers } = require('./claude-runner');
 const { runOllama, isOllamaAvailable, getAvailableModels } = require('./ollama-runner');
