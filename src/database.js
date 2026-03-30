@@ -36,6 +36,11 @@ const getDb = () => {
     try {
       db.exec(`ALTER TABLE sessions ADD COLUMN mcp_keys TEXT DEFAULT ''`);
     } catch { /* column already exists */ }
+
+    // Add preferred_model column if missing (migration for existing DBs)
+    try {
+      db.exec(`ALTER TABLE sessions ADD COLUMN preferred_model TEXT DEFAULT 'auto'`);
+    } catch { /* column already exists */ }
   }
   return db;
 };
@@ -89,7 +94,24 @@ const logMessage = (userId, userMsg, botResp) => {
   } catch (e) { console.error(`[DB] logMessage failed: ${e.message}`); }
 };
 
+const VALID_MODELS = ['auto', 'haiku', 'sonnet', 'opus'];
+const isValidModel = (m) => VALID_MODELS.includes(m) || (typeof m === 'string' && m.startsWith('ollama:'));
+
+const getPreferredModel = (userId) => {
+  const row = getDb().prepare('SELECT preferred_model FROM sessions WHERE telegram_user_id = ?').get(String(userId));
+  return (row?.preferred_model && isValidModel(row.preferred_model)) ? row.preferred_model : 'auto';
+};
+
+const setPreferredModel = (userId, model) => {
+  if (!isValidModel(model)) return;
+  getDb().prepare(`
+    INSERT INTO sessions (telegram_user_id, preferred_model, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(telegram_user_id) DO UPDATE SET preferred_model = ?, updated_at = ?
+  `).run(String(userId), model, new Date().toISOString(), model, new Date().toISOString());
+};
+
 // Initialize DB eagerly at startup (avoid race conditions from concurrent handlers)
 getDb();
 
-module.exports = { getSession, saveSession, logMessage, getRecentMessages };
+module.exports = { getSession, saveSession, logMessage, getRecentMessages, getPreferredModel, setPreferredModel };

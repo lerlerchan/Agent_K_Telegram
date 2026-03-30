@@ -1,62 +1,43 @@
 ---
 name: word
-description: Create, edit, and format Word (.docx) documents using the Word MCP server. Use when user asks to create, update, or export Word documents.
+description: Create, edit, and format Word (.docx) documents. Use when user asks to create, write, export, or download a Word document.
 ---
 
-Work with Word documents using the `word` MCP server tools.
+Create Word (.docx) documents by generating content and running the `make-docx.js` script via Bash.
 
-## MCP Server
-`word` — Office-Word-MCP-Server (GongRzhe)
-Use absolute paths for all file operations.
+## Workflow
 
-## Key Tools by Category
+1. **Write the content** as plain text (with `## Heading` markers for sections if needed)
+2. **Run the script** to generate the .docx:
 
-### Document Management
-| Tool | Purpose |
-|------|---------|
-| `create_document` | Create new .docx (params: `filename`, optional `title`, `author`) |
-| `copy_document` | Duplicate a document |
-| `get_document_info` | Properties and statistics |
-| `get_document_text` | Extract all text |
-| `get_document_outline` | View heading structure |
-| `list_available_documents` | List .docx files in a directory |
+```bash
+node /home/lerler/github/Agent_K_Telegram/scripts/make-docx.js \
+  --title "Document Title" \
+  --output "$WORKSPACE_DIR/filename.docx" \
+  --content "Your full content here"
+```
 
-### Content Insertion
-| Tool | Purpose |
-|------|---------|
-| `add_paragraph` | Add text (params: `filename`, `text`, `style`, `font_size`, `bold`, `color`) |
-| `add_heading` | Add heading level 1–9 |
-| `add_picture` | Embed image |
-| `add_table` | Insert table with data |
-| `add_page_break` | Insert page break |
+3. **Always include the tag verbatim in your response** so the bot delivers the file:
+```
+[SEND_FILE: /absolute/path/to/filename.docx]
+```
 
-### Content Editing
-| Tool | Purpose |
-|------|---------|
-| `search_and_replace` | Global find & replace |
-| `delete_paragraph` | Remove paragraph by index |
-| `replace_paragraph_block_below_header` | Replace content under a heading |
+The script prints `[SEND_FILE: /path]` to stdout. Copy that exact tag into your final response — the bot reads your response text (not the Bash output) to detect and deliver the file.
 
-### Formatting
-| Tool | Purpose |
-|------|---------|
-| `format_text` | Bold/italic/underline/color on character range |
-| `format_table` | Borders, shading on whole table |
-| `set_table_column_widths` | Set column widths |
-| `merge_table_cells` | Merge cells in a block |
+## Content Format
 
-### Export
-| Tool | Purpose |
-|------|---------|
-| `convert_to_pdf` | Export .docx to PDF |
+- Separate paragraphs with a blank line (`\n\n`)
+- Use `# Heading` for H1 or `## Heading` for H2 sections
+- Regular paragraphs need no special markup
 
-## Workflow Pattern
+## Example
 
-1. Create: `create_document` with filename
-2. Build: `add_heading` → `add_paragraph` → `add_table` as needed
-3. Format: `format_table`, `format_text` after content is added
-4. Export: `convert_to_pdf` for final delivery
-5. Deliver: `send-file` skill
+```bash
+node /home/lerler/github/Agent_K_Telegram/scripts/make-docx.js \
+  --title "The Robot's Journey" \
+  --output "$WORKSPACE_DIR/robot_story.docx" \
+  --content "## Chapter 1\n\nOnce upon a time there was a robot.\n\nThe robot loved to write stories.\n\n## Chapter 2\n\nThe end."
+```
 
 ## Arguments
-- `$ARGUMENTS` = document description, filename, or path to existing .docx
+- `$ARGUMENTS` = document description, filename, or topic to write about

@@ -11,8 +11,8 @@ for (const key of REQUIRED_ENV) {
 
 const { Telegraf } = require('telegraf');
 const { runClaude, isComplexTask, shouldUseOllama, detectMcpServers } = require('./claude-runner');
-const { runOllama, isOllamaAvailable } = require('./ollama-runner');
-const { logMessage, getRecentMessages } = require('./database');
+const { runOllama, isOllamaAvailable, getAvailableModels } = require('./ollama-runner');
+const { logMessage, getRecentMessages, getPreferredModel, setPreferredModel } = require('./database');
 const { isUserAllowed, splitMessage, markdownToHtml } = require('./utils');
 const express = require('express');
 const fs = require('fs');
@@ -150,7 +150,7 @@ bot.use(async (ctx, next) => {
 // Commands
 bot.start((ctx) => ctx.reply(
   `Welcome to Agent K!\n\n` +
-  `Commands:\n/new - New conversation\n/status - Bot status\n/test - Test CLI\n` +
+  `Commands:\n/new - New conversation\n/status - Bot status\n/model - Select AI model\n/test - Test CLI\n` +
   `/cancel - Cancel current request\n/cd <path> - Change workspace\n/sendfile <name> - Send file\n\nJust send a message!`
 ));
 
@@ -165,7 +165,62 @@ bot.command('new', async (ctx) => {
 bot.command('status', async (ctx) => {
   const recent = getRecentMessages(ctx.from.id.toString(), 1);
   const lastMsg = recent.length > 0 ? new Date(recent[0].created_at).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' }) : 'None';
-  ctx.reply(`Status: ✅ Online\nLast message: ${lastMsg}\nWorkspace: ${process.env.WORKSPACE_DIR}`);
+  const model = getPreferredModel(ctx.from.id.toString());
+  ctx.reply(`Status: ✅ Online\nLast message: ${lastMsg}\nWorkspace: ${process.env.WORKSPACE_DIR}\nModel: ${model}`);
+});
+
+const MODEL_LABELS = {
+  auto:   'Auto (smart)',
+  haiku:  'Haiku (fastest)',
+  sonnet: 'Sonnet 4.6',
+  opus:   'Opus 4.6 (powerful)',
+};
+
+bot.command('model', async (ctx) => {
+  const current = getPreferredModel(ctx.from.id.toString());
+  const keyboard = [
+    [{ text: `${current === 'auto' ? '✅ ' : ''}Auto (smart)`, callback_data: 'model:auto' }],
+    [{ text: `${current === 'haiku' ? '✅ ' : ''}Haiku (fastest)`, callback_data: 'model:haiku' }],
+    [{ text: `${current === 'sonnet' ? '✅ ' : ''}Sonnet 4.6`, callback_data: 'model:sonnet' }],
+    [{ text: `${current === 'opus' ? '✅ ' : ''}Opus 4.6 (powerful)`, callback_data: 'model:opus' }],
+  ];
+
+  // Append available Ollama models if Ollama is reachable
+  const ollamaModels = await getAvailableModels();
+  if (ollamaModels.length > 0) {
+    keyboard.push([{ text: '── Ollama (local) ──', callback_data: 'model:noop' }]);
+    for (const m of ollamaModels) {
+      const key = `ollama:${m}`;
+      keyboard.push([{ text: `${current === key ? '✅ ' : ''}${m}`, callback_data: `model:${key}` }]);
+    }
+  }
+
+  await ctx.reply('Select AI model for your requests:', {
+    reply_markup: { inline_keyboard: keyboard }
+  });
+});
+
+bot.on('callback_query', async (ctx) => {
+  const data = ctx.callbackQuery?.data;
+  if (!data?.startsWith('model:')) return ctx.answerCbQuery();
+
+  // Strip the leading "model:" prefix to get the value
+  const value = data.slice(6); // "model:".length === 6
+
+  // Separator button — ignore
+  if (value === 'noop') return ctx.answerCbQuery();
+
+  const isOllamaModel = value.startsWith('ollama:');
+  const isClaudeModel = ['auto', 'haiku', 'sonnet', 'opus'].includes(value);
+  if (!isOllamaModel && !isClaudeModel) return ctx.answerCbQuery('Unknown model');
+
+  setPreferredModel(ctx.from.id.toString(), value);
+  const label = isOllamaModel ? value.replace('ollama:', '') + ' (Ollama)' : (MODEL_LABELS[value] || value);
+  await ctx.answerCbQuery(`Switched to ${label}`);
+  await ctx.editMessageText(
+    `Model set to: *${label}*\n\nAll your messages will now use this model. Use /model to change it.`,
+    { parse_mode: 'Markdown' }
+  ).catch(() => {});
 });
 
 bot.command('cd', (ctx) => {
@@ -258,10 +313,35 @@ bot.on('text', async (ctx) => {
   const complex = isComplexTask(ctx.message.text);
   const ollamaOk = await isOllamaAvailable();
   const mcpServers = detectMcpServers(ctx.message.text);
-  const useOllama = shouldUseOllama(ctx.message.text, ollamaOk, mcpServers);
+  const preferredModel = getPreferredModel(userId);
+  const isOllamaPreferred = preferredModel.startsWith('ollama:');
+  const ollamaModelName = isOllamaPreferred ? preferredModel.slice(7) : null; // strip "ollama:"
+
+  // Tasks that require file tool access — must use Claude even if Ollama is selected
+  // IMPORTANT: compute needsClaude BEFORE useOllama so the guard works correctly
+  const FILE_TASK_PATTERNS = [
+    /\.(docx|xlsx|pptx|pdf|csv|txt|json|py|js|ts|html|css|md)\b/i,
+    /\b(save|export|create|generate|write|make|build)\b.{0,40}\b(file|document|doc|word|excel|spreadsheet|pdf|script|report)\b/i,
+    /\b(docx|word doc|word file|excel file|pdf file|powerpoint|slide deck)\b/i,
+    /\bdownload\b|\bsend me\b.{0,20}\bfile\b/i,
+  ];
+  const needsClaude = FILE_TASK_PATTERNS.some(p => p.test(ctx.message.text));
+
+  // Only auto-route to Ollama when user hasn't explicitly chosen a Claude model
+  // AND the task doesn't need file tools (Ollama can't write files — it would say "I can't save files")
+  const useOllama = !needsClaude && ((preferredModel === 'auto' || preferredModel.startsWith('ollama:'))
+    ? shouldUseOllama(ctx.message.text, ollamaOk, mcpServers)
+    : false);
+
+  // If Ollama is preferred but task needs file tools, skip Ollama entirely and use Claude
+  const effectiveOllama = isOllamaPreferred && !needsClaude;
+  const effectiveOllamaModel = effectiveOllama ? ollamaModelName : null;
 
   let statusMsg = '🤔 Processing...';
-  if (complex) statusMsg = '🧠 Processing with Opus...';
+  if (effectiveOllama) statusMsg = `🦙 Processing with ${ollamaModelName}...`;
+  else if (isOllamaPreferred && needsClaude) statusMsg = `🤔 Processing with Claude (file task — Ollama has no file tools)...`;
+  else if (preferredModel !== 'auto') statusMsg = `🤔 Processing with ${MODEL_LABELS[preferredModel] || preferredModel}...`;
+  else if (complex) statusMsg = '🧠 Processing with Opus...';
   else if (useOllama) statusMsg = '🦙 Processing with Ollama...';
 
   console.log(`[${new Date().toLocaleTimeString()}] ⚙️  Processing for ${ctx.from?.username || userId}${complex ? ' [OPUS]' : useOllama ? ' [OLLAMA]' : ''}...`);
@@ -301,7 +381,7 @@ bot.on('text', async (ctx) => {
     // For Ollama, use simple prompt without context injection
     let finalPrompt = prompt;
 
-    if (!forcedOllama && !useOllama) {
+    if (!forcedOllama && !useOllama && !effectiveOllama) {
       // Claude path — inject full context
 
       // Build prompt — include reply context if user replied to a bot message
@@ -336,7 +416,13 @@ bot.on('text', async (ctx) => {
 
     // Route to Ollama (with Claude fallback) or Claude directly
     let result;
-    if (forcedOllama || useOllama) {
+    if (effectiveOllama) {
+      // User explicitly selected an Ollama model — use it directly, no fallback
+      result = await runOllama(finalPrompt, { onProgress, signal: abort.signal, modelName: effectiveOllamaModel });
+      if (process.env.SHOW_MODEL_FOOTER === 'true') {
+        result.response += `\n\n---\n*[Answered by: ${result.model} via Ollama]*`;
+      }
+    } else if (forcedOllama || useOllama) {
       try {
         result = await runOllama(finalPrompt, { onProgress, signal: abort.signal });
         if (process.env.SHOW_MODEL_FOOTER === 'true') {
@@ -350,7 +436,7 @@ bot.on('text', async (ctx) => {
       }
     } else {
       // Use Claude (with full context)
-      result = await runClaude(finalPrompt, { onProgress, signal: abort.signal });
+      result = await runClaude(finalPrompt, { onProgress, signal: abort.signal, modelOverride: preferredModel });
     }
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);

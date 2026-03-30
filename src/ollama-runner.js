@@ -192,7 +192,12 @@ const runWithModel = (model, message, { onProgress, signal } = {}) => {
 /**
  * Run a message against Ollama, trying models in priority order with fallback
  */
-const runOllama = async (message, { onProgress, signal } = {}) => {
+const runOllama = async (message, { onProgress, signal, modelName } = {}) => {
+  // If a specific model is requested, run it directly
+  if (modelName) {
+    return runWithModel(modelName, message, { onProgress, signal });
+  }
+
   const available = await getAvailableModels();
 
   // Filter to installed models; if none match, try all in order anyway
