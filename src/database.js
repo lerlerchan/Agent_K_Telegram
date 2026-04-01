@@ -108,7 +108,8 @@ const logMessage = (userId, userMsg, botResp) => {
 };
 
 const VALID_MODELS = ['auto', 'haiku', 'sonnet', 'opus'];
-const isValidModel = (m) => VALID_MODELS.includes(m) || (typeof m === 'string' && m.startsWith('ollama:'));
+// Ollama model names: alphanumeric, hyphens, dots, underscores, and colon (for tags like "llama3:8b")
+const isValidModel = (m) => VALID_MODELS.includes(m) || (typeof m === 'string' && /^ollama:[\w.\-:]+$/.test(m));
 
 const getPreferredModel = (userId) => {
   const row = getDb().prepare('SELECT preferred_model FROM sessions WHERE telegram_user_id = ?').get(String(userId));

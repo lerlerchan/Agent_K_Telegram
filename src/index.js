@@ -356,6 +356,9 @@ bot.command('cancel', async (ctx) => {
   }
 });
 
+// Escape user-controlled strings before embedding in Telegram HTML messages
+const escapeHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
 // /debug-session — show last session's routing events (Phase 3: structured audit trail)
 bot.command('debug_session', async (ctx) => {
   const userId = ctx.from.id.toString();
@@ -365,7 +368,7 @@ bot.command('debug_session', async (ctx) => {
   }
   const lines = events.map(e => {
     const t = new Date(e.created_at).toLocaleTimeString('en-MY', { timeZone: 'Asia/Kuala_Lumpur' });
-    return `[${t}] <b>${e.event_type}</b>: ${e.detail}`;
+    return `[${t}] <b>${escapeHtml(e.event_type)}</b>: ${escapeHtml(e.detail)}`;
   });
   await ctx.reply(`<b>Last ${events.length} session events:</b>\n\n${lines.join('\n')}`, { parse_mode: 'HTML' });
 });
