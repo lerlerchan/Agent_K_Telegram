@@ -1,21 +1,31 @@
 #!/usr/bin/env node
 /**
- * Saturday GitHub Repo Arranger
- * Scans 00-inbox/ for GitHub link notes.
- * - Extracts clean GitHub URL into `url` frontmatter field
- * - Tags with `github-repo` + category tags
- * - Moves to 04-resources/github/
- * Run: node arrange-github.js [--dry-run]
+ * Saturday GitHub Repo Arranger + Wiki Synthesizer
+ * 1. Scans 00-inbox/ for GitHub link notes → tags + moves to 04-resources/github/
+ * 2. Synthesizes all 04-resources/github/ notes into 02-knowledge/GitHub-Wiki.md
+ *    using live GitHub API data (stars, description, language, archived status)
+ * Run: node arrange-github.js [--dry-run] [--wiki-only]
  */
 
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
 
+// ── Config ──────────────────────────────────────────────────────────────────
+
+const VAULT    = '/home/lerler/ObsidianVault';
+const INBOX    = path.join(VAULT, '00-inbox');
+const DEST_DIR = path.join(VAULT, '04-resources/github');
+const WIKI_OUT = path.join(VAULT, '02-knowledge/GitHub-Wiki.md');
+const DRY_RUN  = process.argv.includes('--dry-run');
+const WIKI_ONLY = process.argv.includes('--wiki-only');
+
+// ── Telegram ─────────────────────────────────────────────────────────────────
+
 function loadEnvToken() {
   try {
     const raw = fs.readFileSync(path.resolve(__dirname, '..', '.env'), 'utf8');
-    const token = (raw.match(/^TELEGRAM_BOT_TOKEN=(.+)$/m) || [])[1]?.trim();
+    const token  = (raw.match(/^TELEGRAM_BOT_TOKEN=(.+)$/m)    || [])[1]?.trim();
     const chatId = (raw.match(/^TELEGRAM_GROUP_CHAT_ID=(.+)$/m) || [])[1]?.trim();
     return { token, chatId };
   } catch { return { token: null, chatId: null }; }
@@ -36,44 +46,27 @@ function sendTelegram(text) {
   req.end();
 }
 
-const VAULT = '/home/lerler/ObsidianVault';
-const INBOX = path.join(VAULT, '00-inbox');
-const DEST_DIR = path.join(VAULT, '04-resources/github');
-const DRY_RUN = process.argv.includes('--dry-run');
+// ── Category rules ────────────────────────────────────────────────────────────
 
-// Category rules: matched against "owner/repo" slug (lowercased)
-// Order: more specific rules first
 const CATEGORY_RULES = [
-  // MCP servers
-  { tags: ['mcp', 'ai-tools'],     pattern: /mcp[-_]|[-_]mcp|mcp$|mcp.server|anysearch|token.saver/i },
-  // Claude Code specific
+  { tags: ['mcp', 'ai-tools'],        pattern: /mcp[-_]|[-_]mcp|mcp$|mcp.server|anysearch|token.saver/i },
   { tags: ['claude-code', 'ai-tools'], pattern: /free.claude|claude.code|cc.token/i },
-  // AI agents / prompting
-  { tags: ['ai-agents', 'ai-tools'], pattern: /agent.skill|professor.synapse|light.skill|skillspector|llm.council/i },
-  // LLM inference / models
-  { tags: ['llm', 'ai-tools'],     pattern: /vllm|exo.?ai|exo.?explore|exo.?cluster|mimo.?code|llm.council|karpathy/i },
-  // Security
-  { tags: ['security'],            pattern: /cloud.?sec|awesome.?cloud|tracecat|vaultwarden/i },
-  // Self-hosted services
-  { tags: ['self-hosted'],         pattern: /syncthing|vaultwarden|paperless|karakeep|stirling|ghost/i },
-  // Productivity tools
-  { tags: ['productivity'],        pattern: /paperless|karakeep|stirling.?pdf|ghost/i },
-  // Image generation
-  { tags: ['image-gen', 'ai-tools'], pattern: /t2i|text.?to.?image|stable.?diff|diffusion|minit2i/i },
-  // Learning / education
-  { tags: ['learning'],            pattern: /ai.?engineer.*scratch|engineering.*coach|from.?scratch|tutorial|bootcamp|course/i },
-  // General AI tools (fallback)
-  { tags: ['ai-tools'],            pattern: /ai.?engineer|ai.?coach|microsoft\/ai/i },
+  { tags: ['ai-agents', 'ai-tools'],  pattern: /agent.skill|professor.synapse|light.skill|skillspector|llm.council/i },
+  { tags: ['llm', 'ai-tools'],        pattern: /vllm|exo.?ai|exo.?explore|exo.?cluster|mimo.?code|llm.council|karpathy/i },
+  { tags: ['security'],               pattern: /cloud.?sec|awesome.?cloud|tracecat|vaultwarden/i },
+  { tags: ['self-hosted'],            pattern: /syncthing|vaultwarden|paperless|karakeep|stirling|ghost/i },
+  { tags: ['productivity'],           pattern: /paperless|karakeep|stirling.?pdf|ghost/i },
+  { tags: ['image-gen', 'ai-tools'],  pattern: /t2i|text.?to.?image|stable.?diff|diffusion|minit2i/i },
+  { tags: ['learning'],               pattern: /ai.?engineer.*scratch|engineering.*coach|from.?scratch|tutorial|bootcamp|course/i },
+  { tags: ['ai-tools'],               pattern: /ai.?engineer|ai.?coach|microsoft\/ai/i },
 ];
 
-// Extract clean GitHub URL — strip fbclid, tracking params, trailing junk
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 function cleanGithubUrl(raw) {
-  // Exclude quotes, tracking params, angle brackets from URL
   const match = raw.match(/https:\/\/github\.com\/[^\s?#"'<>]+/);
   if (!match) return null;
-  // Keep only up to owner/repo (strip /blob/... /tree/... subpaths)
   const clean = match[0].replace(/\/$/, '');
-  // Normalize: keep up to 2 path segments after github.com/
   const parts = clean.replace('https://github.com/', '').split('/');
   if (parts.length >= 2) return `https://github.com/${parts[0]}/${parts[1]}`;
   return clean;
@@ -86,7 +79,6 @@ function parseFrontmatter(content) {
 }
 
 function hasTag(fm, tag) {
-  // Only check inside the tags: [...] array, not whole frontmatter (avoids URL false matches)
   const tagsLine = fm.match(/^tags:\s*\[([^\]]*)\]/m);
   if (!tagsLine) return false;
   return tagsLine[1].split(',').map(t => t.trim().replace(/['"]/g, '')).includes(tag);
@@ -104,7 +96,6 @@ function addTags(fm, newTags) {
 }
 
 function setUrlField(fm, url) {
-  // Already has non-empty url
   if (/^url:\s*"https?:\/\//m.test(fm)) return fm;
   return fm.replace(/^url:\s*""?\s*$/m, `url: "${url}"`);
 }
@@ -112,52 +103,63 @@ function setUrlField(fm, url) {
 function classifyRepo(repoSlug) {
   const tags = new Set(['github-repo']);
   for (const rule of CATEGORY_RULES) {
-    if (rule.pattern.test(repoSlug)) {
-      rule.tags.forEach(t => tags.add(t));
-    }
+    if (rule.pattern.test(repoSlug)) rule.tags.forEach(t => tags.add(t));
   }
   return [...tags];
 }
+
+// Extract primary category from tags array (first non-generic tag)
+const GENERIC_TAGS = new Set(['knowledge', 'github-repo', 'ai-tools']);
+function primaryCategory(tags) {
+  for (const t of tags) {
+    if (!GENERIC_TAGS.has(t)) return t;
+  }
+  return tags.includes('ai-tools') ? 'ai-tools' : 'uncategorized';
+}
+
+// Pull first meaningful sentence from note body (skip URLs and blank lines)
+function extractNotes(body) {
+  const lines = body.split('\n').map(l => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    if (/^https?:\/\//.test(line)) continue;
+    if (/^#+\s/.test(line)) continue;
+    if (line.length < 10) continue;
+    // Truncate to 80 chars
+    return line.length > 80 ? line.slice(0, 77) + '…' : line;
+  }
+  return '';
+}
+
+// ── Arrange pass ──────────────────────────────────────────────────────────────
 
 function processFile(filePath) {
   const content = fs.readFileSync(filePath, 'utf8');
   const parsed = parseFrontmatter(content);
   if (!parsed) return null;
-
   const { fm, body } = parsed;
 
-  // Only process notes that contain a github.com URL
   const fullText = fm + body;
   const cleanUrl = cleanGithubUrl(fullText);
   if (!cleanUrl) return null;
-
-  // Skip if already in destination
   if (filePath.startsWith(DEST_DIR)) return null;
-  // Only move from inbox
   if (!filePath.startsWith(INBOX)) return null;
 
-  // Extract repo slug: owner/repo from URL
   const repoMatch = cleanUrl.match(/github\.com\/([^/]+\/[^/\s]+)/);
   const repoSlug = repoMatch ? repoMatch[1] : cleanUrl;
-
   const actions = [];
   let newFm = fm;
 
-  // 1. Set clean url in frontmatter
   if (!/^url:\s*"https?:\/\//m.test(fm)) {
     newFm = setUrlField(newFm, cleanUrl);
     actions.push(`url → ${cleanUrl}`);
   }
 
-  // 2. Apply tags
   const categoryTags = classifyRepo(repoSlug + ' ' + body + ' ' + fm);
   const missingTags = categoryTags.filter(t => !hasTag(newFm, t));
   if (missingTags.length > 0) {
     newFm = addTags(newFm, missingTags);
     actions.push(`tag [${missingTags.join(', ')}]`);
   }
-
-  // 3. Move to 04-resources/github/
   actions.push(`move → 04-resources/github/`);
 
   if (!DRY_RUN) {
@@ -167,43 +169,249 @@ function processFile(filePath) {
     fs.renameSync(filePath, path.join(DEST_DIR, path.basename(filePath)));
   }
 
-  return {
-    file: path.basename(filePath),
-    repo: repoSlug,
-    actions,
-  };
+  return { file: path.basename(filePath), repo: repoSlug, actions };
 }
 
-function main() {
+// ── GitHub API ────────────────────────────────────────────────────────────────
+
+function loadGithubPat() {
+  try {
+    return fs.readFileSync(path.join(process.env.HOME, '.claude/credentials/github-pat'), 'utf8').trim();
+  } catch { return null; }
+}
+
+function fetchRepoData(owner, repo, pat) {
+  return new Promise((resolve) => {
+    const options = {
+      hostname: 'api.github.com',
+      path: `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Agent-K-WikiSynth/1.0',
+        'Accept': 'application/vnd.github+json',
+        ...(pat ? { 'Authorization': `Bearer ${pat}` } : {}),
+      },
+    };
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          try { resolve({ ok: true, data: JSON.parse(data) }); }
+          catch { resolve({ ok: false }); }
+        } else {
+          resolve({ ok: false, status: res.statusCode });
+        }
+      });
+    });
+    req.on('error', () => resolve({ ok: false }));
+    req.end();
+  });
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── Wiki synthesis ────────────────────────────────────────────────────────────
+
+const CATEGORY_ORDER = [
+  'ai-agents', 'llm', 'mcp', 'claude-code', 'image-gen',
+  'ai-tools', 'self-hosted', 'productivity', 'security', 'learning', 'uncategorized',
+];
+
+const CATEGORY_LABELS = {
+  'ai-agents':   '🤖 AI Agents',
+  'llm':         '🧠 LLM / Inference',
+  'mcp':         '🔌 MCP Servers',
+  'claude-code': '⚡ Claude Code',
+  'image-gen':   '🎨 Image Generation',
+  'ai-tools':    '🛠️ AI Tools',
+  'self-hosted': '🏠 Self-Hosted',
+  'productivity':'📋 Productivity',
+  'security':    '🔒 Security',
+  'learning':    '📚 Learning',
+  'uncategorized': '📦 Uncategorized',
+};
+
+async function synthesizeWiki() {
+  console.log('\n[wiki] Synthesizing GitHub-Wiki.md...');
+  const pat = loadGithubPat();
+  if (!pat) console.warn('[wiki] No GitHub PAT — API rate limit will be low (60 req/hr)');
+
+  // 1. Read all notes from 04-resources/github/
+  if (!fs.existsSync(DEST_DIR)) { console.log('[wiki] No github notes dir, skipping.'); return 0; }
+  const files = fs.readdirSync(DEST_DIR).filter(f => f.endsWith('.md'));
+  console.log(`[wiki] ${files.length} notes found`);
+
+  // 2. Parse each note
+  const entries = [];
+  for (const f of files) {
+    const content = fs.readFileSync(path.join(DEST_DIR, f), 'utf8');
+    const parsed = parseFrontmatter(content);
+    if (!parsed) continue;
+    const { fm, body } = parsed;
+
+    // Extract URL from frontmatter url field only (already cleaned by arrange pass)
+    const urlRaw = (fm.match(/^url:\s*"(https?:\/\/github\.com\/[^"]+)"/m) || [])[1];
+    const urlMatch = urlRaw ? [null, cleanGithubUrl(urlRaw) || urlRaw] : null;
+    if (!urlMatch) {
+      // Try body as fallback (for older notes)
+      const bodyUrl = cleanGithubUrl(body);
+      if (!bodyUrl) continue;
+      const repoMatch = bodyUrl.match(/github\.com\/([^/\s]+\/[^/\s]+)/);
+      if (!repoMatch) continue;
+      entries.push({ file: f, url: bodyUrl, slug: repoMatch[1], fm, body });
+      continue;
+    }
+    const url = urlMatch[1];
+    const repoMatch = url.match(/github\.com\/([^/\s]+\/[^/\s]+)/);
+    if (!repoMatch) continue;
+
+    // Extract tags
+    const tagsMatch = fm.match(/^tags:\s*\[([^\]]*)\]/m);
+    const tags = tagsMatch
+      ? tagsMatch[1].split(',').map(t => t.trim().replace(/['"]/g, '')).filter(Boolean)
+      : [];
+
+    entries.push({ file: f, url, slug: repoMatch[1], tags, fm, body });
+  }
+
+  // 3. Fetch live data from GitHub API
+  console.log(`[wiki] Fetching GitHub API for ${entries.length} repos...`);
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    const [owner, repo] = e.slug.split('/');
+    const result = await fetchRepoData(owner, repo, pat);
+    if (result.ok) {
+      const d = result.data;
+      e.stars       = d.stargazers_count;
+      e.description = d.description || '';
+      e.language    = d.language || '';
+      e.archived    = d.archived || false;
+    } else {
+      e.stars       = -1;
+      e.description = '';
+      e.language    = '';
+      e.archived    = false;
+      e.unavailable = true;
+    }
+    e.notes = extractNotes(e.body);
+    if ((i + 1) % 10 === 0) console.log(`[wiki]   ${i + 1}/${entries.length}`);
+    await sleep(60); // ~1000 req/min well under 5000/hr limit
+  }
+
+  // 3b. Dedup by slug (keep highest-star entry, or first if unavailable)
+  const seen = new Map();
+  for (const e of entries) {
+    const key = e.slug.toLowerCase();
+    const prev = seen.get(key);
+    if (!prev || (e.stars ?? -1) > (prev.stars ?? -1)) seen.set(key, e);
+  }
+  const deduped = [...seen.values()];
+  console.log(`[wiki] After dedup: ${deduped.length} unique repos (${entries.length - deduped.length} duplicates removed)`);
+
+  // 4. Group by category
+  const groups = {};
+  for (const e of deduped) {
+    const cat = primaryCategory(e.tags || []);
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(e);
+  }
+  // Sort each group by stars desc
+  for (const cat of Object.keys(groups)) {
+    groups[cat].sort((a, b) => (b.stars ?? -1) - (a.stars ?? -1));
+  }
+
+  // 5. Build markdown
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', day: '2-digit', month: 'short', year: 'numeric' });
+  const lines = [
+    '---',
+    'title: GitHub Links Wiki',
+    `updated: ${dateStr}`,
+    'tags: [wiki, github-repo]',
+    '---',
+    '',
+    '# GitHub Links Wiki',
+    '',
+    `> Auto-generated ${dateStr} from ${entries.length} saved repos. Updated every Saturday.`,
+    '',
+  ];
+
+  let totalRows = 0;
+  const orderedCats = [
+    ...CATEGORY_ORDER.filter(c => groups[c]),
+    ...Object.keys(groups).filter(c => !CATEGORY_ORDER.includes(c)),
+  ];
+
+  for (const cat of orderedCats) {
+    const label = CATEGORY_LABELS[cat] || cat;
+    const rows = groups[cat];
+    lines.push(`## ${label}`, '');
+    lines.push('| Repo | ⭐ | Lang | Description | Notes |');
+    lines.push('|------|----|------|-------------|-------|');
+    for (const e of rows) {
+      const [owner, repo] = e.slug.split('/');
+      const repoLink = `[${repo}](${e.url})`;
+      const stars = e.unavailable ? '⚠️' : e.archived ? `~~${e.stars}~~` : String(e.stars ?? '?');
+      const lang  = e.language  || '';
+      const desc  = (e.description || '').replace(/\|/g, '\\|').slice(0, 80);
+      const notes = (e.notes || '').replace(/\|/g, '\\|');
+      lines.push(`| ${repoLink} | ${stars} | ${lang} | ${desc} | ${notes} |`);
+      totalRows++;
+    }
+    lines.push('');
+  }
+
+  lines.push(`---`, `*${totalRows} repos · updated ${dateStr}*`);
+
+  // 6. Write
+  if (!DRY_RUN) {
+    fs.writeFileSync(WIKI_OUT, lines.join('\n'), 'utf8');
+    console.log(`[wiki] Written → ${WIKI_OUT} (${totalRows} repos)`);
+  } else {
+    console.log(`[wiki] DRY RUN — would write ${totalRows} rows to ${WIKI_OUT}`);
+  }
+
+  return totalRows;
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+async function main() {
   console.log(`[arrange-github] ${DRY_RUN ? 'DRY RUN — ' : ''}${new Date().toISOString()}`);
 
-  if (!fs.existsSync(INBOX)) { console.error('Inbox not found'); process.exit(1); }
+  let arranged = 0;
 
-  const files = fs.readdirSync(INBOX)
-    .filter(f => f.endsWith('.md'))
-    .map(f => path.join(INBOX, f));
+  if (!WIKI_ONLY) {
+    if (!fs.existsSync(INBOX)) { console.error('Inbox not found'); process.exit(1); }
+    const files = fs.readdirSync(INBOX)
+      .filter(f => f.endsWith('.md'))
+      .map(f => path.join(INBOX, f));
 
-  const results = files.map(processFile).filter(Boolean);
+    const results = files.map(processFile).filter(Boolean);
+    arranged = results.length;
 
-  if (results.length === 0) {
-    console.log('Nothing to arrange.');
-    if (!DRY_RUN) sendTelegram('📦 <b>GitHub Arrange (Sat)</b>\n• Nothing to arrange\n✅ Done');
-    return;
+    if (results.length === 0) {
+      console.log('Nothing to arrange.');
+    } else {
+      for (const r of results) {
+        console.log(`  ${r.repo}`);
+        for (const a of r.actions) console.log(`    → ${a}`);
+      }
+      console.log(`\nArranged: ${results.length} repo(s).`);
+    }
   }
 
-  for (const r of results) {
-    console.log(`  ${r.repo}`);
-    for (const a of r.actions) console.log(`    → ${a}`);
-  }
-  console.log(`\nDone. ${results.length} repo(s) processed.`);
+  const wikiRows = await synthesizeWiki();
 
   if (!DRY_RUN) {
     const date = new Date().toLocaleDateString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', day: '2-digit', month: 'short' });
     let msg = `📦 <b>GitHub Arrange (Sat) — ${date}</b>\n`;
-    msg += `• Repos processed: ${results.length}\n`;
+    if (!WIKI_ONLY) msg += `• Arranged: ${arranged} new repo(s)\n`;
+    msg += `• Wiki: ${wikiRows} repos → GitHub-Wiki.md\n`;
     msg += `✅ Done`;
     sendTelegram(msg);
   }
 }
 
-main();
+main().catch(err => { console.error(err); process.exit(1); });
