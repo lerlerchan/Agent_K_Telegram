@@ -1,0 +1,5 @@
+Upstream repository: https://github.com/Kulaxyz/self-learning-skills
+Vendored from commit: d4e0a7ec1f1a (2026-07-01)
+License: MIT
+Included skills:
+- self-learning
