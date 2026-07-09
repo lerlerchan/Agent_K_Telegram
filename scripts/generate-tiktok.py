@@ -77,7 +77,9 @@ def find_post() -> Path | None:
         # PRD §1 "next unprocessed post": skip already-queued ones awaiting review
         if (fm.get("tiktok-ready") == "true" and fm.get("published") != "true"
                 and fm.get("tiktok_queued") != "true"):
-            eligible.append((fm.get("date", p.stem[:10]), p))
+            # optional tiktok_order overrides date order (series rotation control)
+            order = int(fm.get("tiktok_order", 9999))
+            eligible.append(((order, fm.get("date", p.stem[:10])), p))
     return min(eligible)[1] if eligible else None
 
 
@@ -183,6 +185,8 @@ def make_slides(plan: dict, out_dir: Path) -> list[Path]:
     f_pill = ImageFont.truetype(FONT_MONO_B, 36)
 
     def chrome(d, label, footer):
+        if plan.get("series"):
+            d.text((60, 50), plan["series"], font=f_small, fill=ACCENT)
         d.text((W - 60, 50), "lertechnotes", font=f_small, fill=GREY, anchor="ra")
         d.rectangle([60, 300, W - 60, 306], fill=CYAN)
         d.text((60, 230), label.upper(), font=f_label, fill=CYAN)
@@ -307,6 +311,7 @@ def main() -> int:
 
     body = post.read_text(encoding="utf-8", errors="replace")
     plan = llm_extract(body)
+    plan["series"] = frontmatter(body).get("tiktok_series", "")
     n_words = sum(len(s.split()) for s in plan["voiceover"])
     log(f"Voiceover script written ({n_words} words)")
 
