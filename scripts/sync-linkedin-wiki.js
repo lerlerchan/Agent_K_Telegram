@@ -201,6 +201,42 @@ function renderHome(articles) {
   return home;
 }
 
+// ── Local vault Home.md ───────────────────────────────────────────────────────
+
+function writeLocalHome(articles) {
+  const homePath = path.join(WIKI_DIR, 'Home.md');
+  const updated  = new Date().toISOString().slice(0, 10);
+
+  const byCategory = {};
+  for (const a of articles) {
+    if (!byCategory[a.category]) byCategory[a.category] = [];
+    byCategory[a.category].push(a);
+  }
+
+  let home = `---\ntitle: LinkedIn Content Index\ntags: [linkedin-ready, index]\ndate: ${updated}\n---\n\n`;
+  home += `# LinkedIn Content Index\n\n`;
+  home += `> Auto-generated — updated **${updated}** | ${articles.length} articles\n\n`;
+
+  home += `## All Articles\n\n`;
+  home += `| Date | Title | Category |\n`;
+  home += `|------|-------|----------|\n`;
+  for (const a of articles) {
+    home += `| ${a.date} | [[${a.slug}\\|${a.title}]] | ${a.category} |\n`;
+  }
+  home += '\n';
+
+  for (const [cat, items] of Object.entries(byCategory)) {
+    home += `## ${cat}\n\n`;
+    for (const a of items) {
+      home += `- [[${a.slug}|${a.title}]] — ${a.date}\n`;
+    }
+    home += '\n';
+  }
+
+  fs.writeFileSync(homePath, home);
+  log(`Written local ${homePath}`);
+}
+
 // ── Git wiki sync ─────────────────────────────────────────────────────────────
 
 function run(cmd, opts = {}) {
@@ -280,6 +316,7 @@ function main() {
   const articles = buildArticles(filepaths);
   log(`Built ${articles.length} article objects`);
 
+  writeLocalHome(articles);
   syncWiki(articles);
   log('=== sync-linkedin-wiki done ===');
 }
