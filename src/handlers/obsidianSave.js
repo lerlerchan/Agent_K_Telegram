@@ -212,4 +212,4 @@ function listNotes(n = 5) {
   return files;
 }
 
-module.exports = { saveNote, listNotes, isUrl };
+module.exports = { saveNote, listNotes, isUrl, classifyTags };

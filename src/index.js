@@ -101,7 +101,7 @@ const { runOllama, isOllamaAvailable, getAvailableModels } = require('./ollama-r
 const { runDeepSeek, DEEPSEEK_MODELS } = require('./deepseek-runner');
 const { logMessage, getRecentMessages, getPreferredModel, setPreferredModel, logEvent, getSessionEvents, getUserMaxTurns, setUserMaxTurns } = require('./database');
 const { isUserAllowed, splitMessage, markdownToHtml } = require('./utils');
-const { saveNote, listNotes } = require('./handlers/obsidianSave');
+const { saveNote, listNotes, classifyTags } = require('./handlers/obsidianSave');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -847,27 +847,67 @@ const handleMedia = async (ctx, getFile, prompt) => {
 };
 
 // Save file directly to Obsidian inbox when caption starts with /save or 📥
+// For images, also writes a companion .md note with embedded image + analysis template.
+// Caption format: "📥 Title | Explanation / analysis text here"
+// Everything before "|" = title; everything after = body/analysis
 const handleMediaSave = async (ctx, getFileId, origName, ext) => {
   const caption = ctx.message.caption || '';
   const isSaveTrigger = caption.startsWith('/save') || caption.startsWith('📥');
   if (!isSaveTrigger) return false;
 
-  // Extract title from caption: strip trigger prefix, use remainder or origName
   const stripped = caption.replace(/^\/save\s*|^📥\s*/u, '').trim();
-  const title = stripped || origName?.replace(/\.[^.]+$/, '') || 'untitled';
+  const pipeIdx = stripped.indexOf('|');
+  const title = (pipeIdx > 0 ? stripped.slice(0, pipeIdx) : stripped).trim()
+    || origName?.replace(/\.[^.]+$/, '') || 'untitled';
+  const analysis = pipeIdx > 0 ? stripped.slice(pipeIdx + 1).trim() : '';
 
   const vaultInbox = process.env.VAULT_DIR
     ? `${process.env.VAULT_DIR}/00-inbox`
     : '/home/lerler/ObsidianVault/00-inbox';
   const date = new Date().toISOString().slice(0, 10);
   const slug = title.toLowerCase().replace(/[^\w]+/g, '-').slice(0, 60);
-  const filename = `${date}-${slug}${ext}`;
-  const dest = `${vaultInbox}/${filename}`;
+  const imgFilename = `${date}-${slug}${ext}`;
+  const dest = `${vaultInbox}/${imgFilename}`;
 
   try {
     const link = await ctx.telegram.getFileLink(getFileId(ctx));
     await downloadFile(link.href, dest);
-    await ctx.reply(`✅ Saved to 00-inbox/${filename}`);
+
+    // Write companion .md for image files (searchable, embeddable, ML-ready)
+    const isImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext.toLowerCase());
+    if (isImage) {
+      const autoTags = classifyTags(title, analysis);
+      const tags = [...new Set(['image', ...autoTags])];
+      const mdFilename = `${date}-${slug}.md`;
+      const mdDest = `${vaultInbox}/${mdFilename}`;
+      const mdContent = [
+        '---',
+        `title: "${title}"`,
+        `date: ${date}`,
+        `tags: [${tags.join(', ')}]`,
+        'source: telegram',
+        'type: chart-analysis',
+        'status: inbox',
+        '---',
+        '',
+        `# ${title}`,
+        '',
+        `![[${imgFilename}]]`,
+        '',
+        '## Analysis',
+        '',
+        analysis || '_Add analysis here_',
+        '',
+        '## Outcome',
+        '',
+        '_To be confirmed — fill after event_',
+        '',
+      ].join('\n');
+      fs.writeFileSync(mdDest, mdContent, 'utf8');
+      await ctx.reply(`✅ Saved image + note to 00-inbox/\n📄 ${mdFilename}`);
+    } else {
+      await ctx.reply(`✅ Saved to 00-inbox/${imgFilename}`);
+    }
   } catch (e) {
     await ctx.reply(`❌ Save failed: ${e.message}`);
   }

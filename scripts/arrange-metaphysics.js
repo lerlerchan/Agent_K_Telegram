@@ -140,6 +140,19 @@ function processFile(filePath) {
     if (shouldMove && !alreadyInDest) {
       if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
       fs.renameSync(filePath, destPath);
+      // Move any embedded image attachments alongside the note
+      const srcDir = path.dirname(filePath);
+      const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
+      const embeds = [...(body + newFm).matchAll(/!\[\[([^\]]+)\]\]/g)]
+        .map(m => m[1].split('|')[0].trim());
+      for (const embed of embeds) {
+        if (!IMAGE_EXTS.has(path.extname(embed).toLowerCase())) continue;
+        const srcImg = path.join(srcDir, embed);
+        if (fs.existsSync(srcImg)) {
+          fs.renameSync(srcImg, path.join(destDir, path.basename(embed)));
+          actions.push(`move attachment → ${path.basename(embed)}`);
+        }
+      }
     }
   }
 
