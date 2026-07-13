@@ -211,6 +211,78 @@ function fetchRepoData(owner, repo, pat) {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// ── README enrichment ─────────────────────────────────────────────────────────
+
+function fetchRaw(url, pat) {
+  return new Promise((resolve) => {
+    const parsed = new URL(url);
+    const options = {
+      hostname: parsed.hostname,
+      path: parsed.pathname,
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Agent-K-WikiSynth/1.0',
+        ...(pat ? { 'Authorization': `Bearer ${pat}` } : {}),
+      },
+    };
+    const req = https.request(options, (res) => {
+      if (res.statusCode !== 200) { resolve(null); return; }
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => resolve(data));
+    });
+    req.on('error', () => resolve(null));
+    req.end();
+  });
+}
+
+async function fetchReadme(owner, repo, pat) {
+  for (const branch of ['main', 'master']) {
+    const raw = await fetchRaw(
+      `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/README.md`, pat
+    );
+    if (raw) return raw;
+  }
+  return null;
+}
+
+function cleanReadme(raw) {
+  return raw
+    .replace(/\[!\[.*?\]\(.*?\)\]\(.*?\)/g, '')  // badge links
+    .replace(/!\[.*?\]\(.*?\)/g, '')               // images
+    .replace(/^\s*<[^>]+>\s*$/gm, '')              // bare HTML tag lines
+    .replace(/<!--[\s\S]*?-->/g, '')               // HTML comments
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    .slice(0, 2500);
+}
+
+async function enrichWithReadme(arranged, pat) {
+  if (arranged.length === 0) return;
+  console.log(`[readme] Fetching README for ${arranged.length} new repo(s)...`);
+  for (const r of arranged) {
+    const [owner, repo] = r.repo.split('/');
+    if (!owner || !repo) continue;
+
+    const filePath = path.join(DEST_DIR, r.file);
+    if (!fs.existsSync(filePath)) continue;
+
+    const content = fs.readFileSync(filePath, 'utf8');
+    if (content.includes('## README')) {
+      console.log(`  [readme] ${r.repo} — already enriched, skipping`);
+      continue;
+    }
+
+    const raw = await fetchReadme(owner, repo, pat);
+    if (!raw) { console.log(`  [readme] ${r.repo} — README not found`); continue; }
+
+    const excerpt = cleanReadme(raw);
+    fs.writeFileSync(filePath, content.trimEnd() + `\n\n## README\n\n${excerpt}\n`, 'utf8');
+    console.log(`  [readme] ${r.repo} — ${excerpt.length} chars appended`);
+    await sleep(150);
+  }
+}
+
 // ── Wiki synthesis ────────────────────────────────────────────────────────────
 
 const CATEGORY_ORDER = [
@@ -400,6 +472,9 @@ async function main() {
       }
       console.log(`\nArranged: ${results.length} repo(s).`);
     }
+
+    const pat = loadGithubPat();
+    if (!DRY_RUN) await enrichWithReadme(results, pat);
   }
 
   const wikiRows = await synthesizeWiki();
