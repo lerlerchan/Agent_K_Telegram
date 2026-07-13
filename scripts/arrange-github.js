@@ -13,12 +13,14 @@ const https = require('https');
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
-const VAULT    = '/home/lerler/ObsidianVault';
-const INBOX    = path.join(VAULT, '00-inbox');
-const DEST_DIR = path.join(VAULT, '04-resources/github');
-const WIKI_OUT = path.join(VAULT, '02-knowledge/GitHub-Wiki.md');
-const DRY_RUN  = process.argv.includes('--dry-run');
-const WIKI_ONLY = process.argv.includes('--wiki-only');
+const VAULT       = '/home/lerler/ObsidianVault';
+const INBOX       = path.join(VAULT, '00-inbox');
+const DEST_DIR    = path.join(VAULT, '04-resources/github');
+const ARCHIVE_DIR = path.join(VAULT, '05-archive/github');
+const WIKI_OUT    = path.join(VAULT, '02-knowledge/GitHub-Wiki.md');
+const DRY_RUN     = process.argv.includes('--dry-run');
+const WIKI_ONLY   = process.argv.includes('--wiki-only');
+const SKIP_PRUNE  = process.argv.includes('--skip-prune');
 
 // ── Telegram ─────────────────────────────────────────────────────────────────
 
@@ -283,6 +285,47 @@ async function enrichWithReadme(arranged, pat) {
   }
 }
 
+// ── Dead repo pruner ──────────────────────────────────────────────────────────
+
+async function pruneDeadRepos(pat) {
+  if (!fs.existsSync(DEST_DIR)) return 0;
+  const files = fs.readdirSync(DEST_DIR).filter(f => f.endsWith('.md'));
+  if (files.length === 0) return 0;
+
+  console.log(`\n[prune] Checking ${files.length} repo notes for dead links...`);
+  let pruned = 0;
+
+  for (const f of files) {
+    const filePath = path.join(DEST_DIR, f);
+    const content = fs.readFileSync(filePath, 'utf8');
+    const parsed = parseFrontmatter(content);
+    if (!parsed) continue;
+
+    const urlRaw = (parsed.fm.match(/^url:\s*"(https?:\/\/github\.com\/[^"]+)"/m) || [])[1];
+    const url = urlRaw ? cleanGithubUrl(urlRaw) : cleanGithubUrl(parsed.body);
+    if (!url) continue;
+
+    const repoMatch = url.match(/github\.com\/([^/\s]+\/[^/\s]+)/);
+    if (!repoMatch) continue;
+    const [owner, repo] = repoMatch[1].split('/');
+
+    const result = await fetchRepoData(owner, repo, pat);
+    // Only archive on definitive 404 — skip transient errors (403, 500, network fail)
+    if (result.ok || result.status !== 404) { await sleep(60); continue; }
+
+    console.log(`  [prune] DEAD — ${owner}/${repo} → 05-archive/github/`);
+    if (!DRY_RUN) {
+      if (!fs.existsSync(ARCHIVE_DIR)) fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
+      fs.renameSync(filePath, path.join(ARCHIVE_DIR, f));
+    }
+    pruned++;
+    await sleep(60);
+  }
+
+  console.log(`[prune] Done — ${pruned} dead repo(s) archived.`);
+  return pruned;
+}
+
 // ── Wiki synthesis ────────────────────────────────────────────────────────────
 
 const CATEGORY_ORDER = [
@@ -477,12 +520,16 @@ async function main() {
     if (!DRY_RUN) await enrichWithReadme(results, pat);
   }
 
+  const pat = loadGithubPat();
+  const pruned = (!SKIP_PRUNE && !DRY_RUN) ? await pruneDeadRepos(pat) : 0;
+
   const wikiRows = await synthesizeWiki();
 
   if (!DRY_RUN) {
     const date = new Date().toLocaleDateString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', day: '2-digit', month: 'short' });
     let msg = `📦 <b>GitHub Arrange (Sat) — ${date}</b>\n`;
     if (!WIKI_ONLY) msg += `• Arranged: ${arranged} new repo(s)\n`;
+    if (pruned > 0) msg += `• Pruned: ${pruned} dead repo(s) → 05-archive/github/\n`;
     msg += `• Wiki: ${wikiRows} repos → GitHub-Wiki.md\n`;
     msg += `✅ Done`;
     sendTelegram(msg);
