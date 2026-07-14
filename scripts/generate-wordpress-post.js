@@ -218,14 +218,15 @@ ${postSummaries}
 TASK: Write a personal travel+AI blog post that synthesizes the key insights from the source posts above. Do NOT copy them — distill, connect, and reframe them through a personal travel learning lens.
 
 WRITING REQUIREMENTS:
-- Voice: First person, personal ("I was in [travel moment] when I realized..."). Honest, direct, no fluff.
+- Voice: First person, personal, honest, direct, no fluff.
+- CRITICAL — NO FABRICATED EXPERIENCES: Do NOT invent specific trips, places, train rides, or people (e.g. "a monk on a train in Thailand"). The author is a Malaysian developer; you do not know their actual travel history. Use only honest, generic reflective framings: "away from my desk", "during a break in a kopitiam", "on a slow morning while traveling", "reviewing my notes after a trip". Never name a specific city, country, or fabricated scene as if it happened.
 - Audience: Non-technical people (OPC — ordinary professional/career people) who want to understand AI but feel overwhelmed. Explain everything as if talking to a smart friend with no coding background.
-- Angle: Position AI/tech learnings as travel realizations — things you discover when you step away from the office, travel, and reflect.
+- Angle: Position AI/tech learnings as realizations that come from stepping away from the office and reflecting — but grounded, not staged.
 - Length: Minimum 1000 words, maximum 1400 words.
 - Language: English only.
 
 REQUIRED STRUCTURE:
-# [Compelling H1 Title — personal, specific, curiosity-triggering, under 70 chars]
+# [Compelling H1 Title — personal, curiosity-triggering, under 70 chars — no fabricated place names]
 
 [meta_description: 150-155 chars for SEO — write this as an HTML comment <!-- meta: ... --> at the top, before the H1]
 
