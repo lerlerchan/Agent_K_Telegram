@@ -43,7 +43,7 @@ FONT_SANS = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 FONT_SANS_B = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 FONT_MONO = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
 
-SLIDE_DURATIONS = [5, 4, 5, 5, 5, 5, 6]  # PRD section 5
+SLIDE_DURATIONS = [3, 3.5, 5, 5, 5, 5, 6]  # PRD section 5 — hook/problem shortened, 3.4s avg watch = drop-off before payoff
 
 
 def log(msg: str) -> None:
@@ -261,19 +261,29 @@ def assemble(slides: list[Path], audio: str, out_path: Path) -> None:
     total = sum(SLIDE_DURATIONS)
     # scale slide durations to actual audio length so -shortest never clips the CTA
     factor = max(1.0, (aud + 0.3) / total)
-    lines = []
-    for p, dur in zip(slides, SLIDE_DURATIONS):
-        lines.append(f"file '{p}'\nduration {dur * factor:.2f}")
-    lines.append(f"file '{slides[-1]}'")  # concat demuxer needs final repeat
+    fps = 30
+    # ponytail: per-slide Ken Burns via zoompan — static hold reads as dead air on TikTok,
+    # a slow zoom keeps every frame visibly "alive" even with no other animation budget
+    clip_paths = []
+    for i, (p, dur) in enumerate(zip(slides, SLIDE_DURATIONS)):
+        d = dur * factor
+        n_frames = max(1, int(d * fps))
+        clip = TMP / f"clip_{i:02d}.mp4"
+        subprocess.run([
+            "ffmpeg", "-y", "-loop", "1", "-i", str(p), "-t", f"{d:.2f}",
+            "-vf", f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
+                   f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=#0a1628,"
+                   f"zoompan=z='min(zoom+0.0015,1.08)':d={n_frames}:s={W}x{H}:fps={fps}",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p",
+            str(clip),
+        ], check=True, capture_output=True)
+        clip_paths.append(clip)
     concat = TMP / "concat.txt"
-    concat.write_text("\n".join(lines) + "\n")
+    concat.write_text("\n".join(f"file '{c}'" for c in clip_paths) + "\n")
     subprocess.run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat),
         "-i", audio,
-        "-vf", f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
-               f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=#0a1628,fps=30",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-map", "0:v:0", "-map", "1:a:0",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-map", "0:v:0", "-map", "1:a:0",
         "-shortest", "-movflags", "+faststart", str(out_path),
     ], check=True, capture_output=True)
 
