@@ -132,14 +132,14 @@ def tts(text: str, out_mp3: str) -> str:
         try:
             import openai
             client = openai.OpenAI(api_key=os.environ[key_env], base_url=base)
-            resp = client.audio.speech.create(model="tts-1", voice="onyx",
+            resp = client.audio.speech.create(model="tts-1", voice="nova",
                                               input=text, speed=1.05)
             resp.stream_to_file(out_mp3)
             return name
         except Exception as e:
             log(f"TTS via {name} failed ({e}), trying next")
-    # ponytail: free fallback so cron never blocks; deep male voice ~ onyx
-    subprocess.run([sys.executable, "-m", "edge_tts", "--voice", "en-US-ChristopherNeural",
+    # ponytail: free fallback so cron never blocks; female voice ~ nova
+    subprocess.run([sys.executable, "-m", "edge_tts", "--voice", "en-US-AriaNeural",
                     "--rate", "+5%", "--text", text, "--write-media", out_mp3], check=True)
     return "edge-tts"
 
@@ -148,6 +148,78 @@ def audio_duration(path: str) -> float:
     out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                           "-of", "csv=p=0", path], capture_output=True, text=True, check=True)
     return float(out.stdout.strip())
+
+
+# ── Step 3.5: word-level captions (faster-whisper + burned-in ASS) ──────
+# ponytail: reuse the faster-whisper install already set up in the sibling
+# TikTokPipeline venv instead of a second pip install / model download
+WHISPER_VENV_PY = "/home/lerler/TikTokPipeline/venv/bin/python3"
+_WHISPER_WORKER = """
+import sys, json
+from faster_whisper import WhisperModel
+model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
+segments, _ = model.transcribe(sys.argv[1], word_timestamps=True)
+words = [{"w": w.word.strip(), "start": w.start, "end": w.end}
+         for seg in segments for w in seg.words]
+print(json.dumps(words))
+"""
+
+
+def transcribe_words(audio_path: str) -> list[dict]:
+    """Word-level timestamps for the TTS output, via faster-whisper. [] on any failure."""
+    try:
+        out = subprocess.run([WHISPER_VENV_PY, "-c", _WHISPER_WORKER, audio_path],
+                             capture_output=True, text=True, timeout=60, check=True)
+        return json.loads(out.stdout.strip().splitlines()[-1])
+    except Exception as e:
+        log(f"Caption transcription failed ({e}) — shipping without burned-in captions")
+        return []
+
+
+def _rgb_to_ass_style(rgb: tuple) -> str:
+    r, g, b = rgb
+    return f"&H00{b:02X}{g:02X}{r:02X}"  # Style line fields: &HAABBGGRR
+
+
+def _rgb_to_ass_inline(rgb: tuple) -> str:
+    r, g, b = rgb
+    return f"&H{b:02X}{g:02X}{r:02X}&"  # \c override tags: &HBBGGRR&
+
+
+def build_ass(words: list[dict], out_path: Path, group_size: int = 3) -> bool:
+    """Karaoke-style caption track: current word highlighted in ACCENT, rest in WHITE."""
+    if not words:
+        return False
+    base, active = _rgb_to_ass_inline(WHITE), _rgb_to_ass_inline(ACCENT)
+    header = f"""[Script Info]
+PlayResX: {W}
+PlayResY: {H}
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV
+Style: Caption,DejaVu Sans,58,{_rgb_to_ass_style(WHITE)},&H00000000,&H80000000,1,1,3,0,2,60,60,220
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    def ts(t: float) -> str:
+        h, rem = divmod(max(0.0, t), 3600)
+        m, s = divmod(rem, 60)
+        return f"{int(h)}:{int(m):02d}:{s:05.2f}"
+
+    lines = [header]
+    for i in range(0, len(words), group_size):
+        group = words[i:i + group_size]
+        for j, active_word in enumerate(group):
+            parts = []
+            for k, w in enumerate(group):
+                color = active if k == j else base
+                parts.append(f"{{\\c{color}}}{w['w']}{{\\r}}")
+            text = " ".join(parts)
+            lines.append(f"Dialogue: 0,{ts(active_word['start'])},{ts(active_word['end'])},Caption,,0,0,0,,{text}\n")
+    out_path.write_text("".join(lines))
+    return True
 
 
 # ── Step 4: Blueprint slides ────────────────────────────────────────────
@@ -256,7 +328,7 @@ def make_slides(plan: dict, out_dir: Path) -> list[Path]:
 
 
 # ── Step 5: FFmpeg ──────────────────────────────────────────────────────
-def assemble(slides: list[Path], audio: str, out_path: Path) -> None:
+def assemble(slides: list[Path], audio: str, out_path: Path, ass_path: Path | None = None) -> None:
     aud = audio_duration(audio)
     total = sum(SLIDE_DURATIONS)
     # scale slide durations to actual audio length so -shortest never clips the CTA
@@ -280,12 +352,24 @@ def assemble(slides: list[Path], audio: str, out_path: Path) -> None:
         clip_paths.append(clip)
     concat = TMP / "concat.txt"
     concat.write_text("\n".join(f"file '{c}'" for c in clip_paths) + "\n")
-    subprocess.run([
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat),
-        "-i", audio,
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-map", "0:v:0", "-map", "1:a:0",
-        "-shortest", "-movflags", "+faststart", str(out_path),
-    ], check=True, capture_output=True)
+    if ass_path and ass_path.exists():
+        # burning captions requires re-encoding the video stream (can't -c:v copy)
+        escaped = str(ass_path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+        cmd = [
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat),
+            "-i", audio, "-vf", f"ass='{escaped}'",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k", "-map", "0:v:0", "-map", "1:a:0",
+            "-shortest", "-movflags", "+faststart", str(out_path),
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat),
+            "-i", audio,
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-map", "0:v:0", "-map", "1:a:0",
+            "-shortest", "-movflags", "+faststart", str(out_path),
+        ]
+    subprocess.run(cmd, check=True, capture_output=True)
 
 
 # ── Step 7: frontmatter update ──────────────────────────────────────────
@@ -330,11 +414,16 @@ def main() -> int:
     engine = tts(" ".join(plan["voiceover"]), voice_mp3)
     log(f"TTS generated via {engine}: {voice_mp3} ({audio_duration(voice_mp3):.1f}s)")
 
+    words = transcribe_words(voice_mp3)
+    ass_path = TMP / "captions.ass"
+    has_captions = build_ass(words, ass_path)
+    log(f"Captions: {len(words)} words transcribed" if has_captions else "Captions: skipped")
+
     slides = make_slides(plan, TMP)
     log(f"Slides generated: {len(slides)} PNGs")
 
     QUEUE.mkdir(parents=True, exist_ok=True)
-    assemble(slides, voice_mp3, out_mp4)
+    assemble(slides, voice_mp3, out_mp4, ass_path if has_captions else None)
     size = out_mp4.stat().st_size
     assert size > 0, "output mp4 empty"
     log(f"Video written: TikTokQueue/{out_mp4.name} ({size // 1024}KB)")
