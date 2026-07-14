@@ -96,9 +96,12 @@ Output ONLY valid JSON, no markdown fences:
   "methods": [{"name": "...", "desc": "one line", "stat": "key stat/command"}],  // exactly 3
   "total_methods": <int, how many methods the full post covers>,
   "voiceover": ["seg1 ~10 words", "seg2 ~8 words", "seg3 ~10 words",
-                "seg4 ~10 words", "seg5 ~10 words", "seg6 ~10 words", "seg7 ~12 words"]
+                "seg4 ~10 words", "seg5 ~10 words", "seg6 ~10 words", "seg7 ~12 words"],
+  "title": "SEO+AEO friendly post title, max 90 chars — front-load the primary keyword/query the way someone would type it into Google or ask an AI assistant, specific not clickbait-vague",
+  "description": "2-3 sentences for the platform caption box. Sentence 1 restates the core question/problem with the primary keyword naturally included (this is what AI answer engines and search crawlers index). Sentence 2-3 states the concrete payoff. End with a soft CTA to the full post on lertechnotes.",
+  "hashtags": ["exactly 5 tags, no # symbol, no spaces within a tag, mix of 1-2 broad+relevant niche tags, ordered broad to specific"]
 }
-Voiceover pacing ~130 wpm; segment N must fit slide N durations [5,4,5,5,5,5,6]s
+Voiceover pacing ~130 wpm; segment N must fit slide N durations [3,3.5,5,5,5,5,6]s
 with 0.5s margin. Segment 7 must end: "Full breakdown on lertechnotes. Link in bio."
 """
 
@@ -372,6 +375,19 @@ def assemble(slides: list[Path], audio: str, out_path: Path, ass_path: Path | No
     subprocess.run(cmd, check=True, capture_output=True)
 
 
+# ── Step 6: SEO/AEO metadata sidecar (copy-paste for TikTok + Instagram) ─
+def write_metadata(plan: dict, out_path: Path) -> None:
+    title = plan.get("title", plan.get("hook", ""))
+    desc = plan.get("description", "")
+    tags = plan.get("hashtags", [])[:5]
+    hashtag_line = " ".join(f"#{t.lstrip('#').replace(' ', '')}" for t in tags)
+    out_path.write_text(
+        f"TITLE\n{title}\n\n"
+        f"DESCRIPTION\n{desc}\n\n"
+        f"HASHTAGS\n{hashtag_line}\n"
+    )
+
+
 # ── Step 7: frontmatter update ──────────────────────────────────────────
 def update_frontmatter(note_path: Path, updates: dict) -> None:
     text = note_path.read_text(encoding="utf-8")
@@ -427,6 +443,10 @@ def main() -> int:
     size = out_mp4.stat().st_size
     assert size > 0, "output mp4 empty"
     log(f"Video written: TikTokQueue/{out_mp4.name} ({size // 1024}KB)")
+
+    meta_path = QUEUE / f"{slug}-{today}.txt"
+    write_metadata(plan, meta_path)
+    log(f"Metadata written: TikTokQueue/{meta_path.name}")
 
     update_frontmatter(post, {"tiktok_queued": "true", "tiktok_queued_date": today})
     log("Frontmatter updated: tiktok_queued: true")
