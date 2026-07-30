@@ -255,6 +255,7 @@ def make_slides(plan: dict, out_dir: Path) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     f_label = ImageFont.truetype(FONT_MONO_B, 40)
     f_title = ImageFont.truetype(FONT_SANS_B, 88)
+    f_hero = ImageFont.truetype(FONT_SANS_B, 116)  # hook slide only — bigger, fills the frame
     f_body = ImageFont.truetype(FONT_SANS, 52)
     f_stat = ImageFont.truetype(FONT_MONO, 46)
     f_small = ImageFont.truetype(FONT_MONO, 30)
@@ -305,24 +306,40 @@ def make_slides(plan: dict, out_dir: Path) -> list[Path]:
     ]
     for idx, (label, footer) in enumerate(specs, 1):
         img, d = _base_slide(ImageDraw, Image)
-        chrome(d, label, footer)
         y = 420
         if idx == 1:
-            y = title_block(d, y, plan["hook"])
-            d.text((60, y + 40), "the secret below ↓", font=f_body, fill=ACCENT)
+            chrome(d, label, "")  # no bottom footer — avoids duplicating "the secret below" near the title
+            # accent ring behind the hero text for visual mass — the old top-anchored
+            # layout left ~55% of the frame empty below the title, which read as dead air
+            ring_cx, ring_cy, ring_r = W // 2, 1120, 460
+            d.ellipse([ring_cx - ring_r, ring_cy - ring_r, ring_cx + ring_r, ring_cy + ring_r],
+                      outline=GRID_COL, width=14)
+            hook_lines = _wrap(d, plan["hook"], f_hero, W - 200)  # narrower than title_block's W-120: leaves margin so the punchier hook-slide zoom doesn't crop text off-edge
+            line_h = f_hero.size + 16
+            block_h = len(hook_lines) * line_h + f_body.size + 40
+            avail_top, avail_bottom = 380, H - 200
+            y = avail_top + max(0, (avail_bottom - avail_top - block_h) // 2)
+            for line in hook_lines:
+                d.text((60, y), line, font=f_hero, fill=WHITE)
+                y += line_h
+            d.text((60, y + 30), "the secret below ↓", font=f_body, fill=ACCENT)
         elif idx == 2:
+            chrome(d, label, footer)
             y = title_block(d, y, "Why it hurts", font=f_title)
             body_block(d, y + 40, plan["problem_bullets"][:4])
         elif idx in (3, 4, 5):
+            chrome(d, label, footer)
             m = methods[idx - 3]
             y = pill(d, 60, y, f"METHOD {idx - 2}") + 50
             y = title_block(d, y, m["name"])
             y = body_block(d, y + 30, [m["desc"]], bullet=False)
             d.text((80, y + 20), m["stat"], font=f_stat, fill=ACCENT)
         elif idx == 6:
+            chrome(d, label, footer)
             y = title_block(d, y, "Stack all of them")
             body_block(d, y + 40, [f'{m["name"]} — {m["stat"]}' for m in methods])
         else:
+            chrome(d, label, footer)
             y = title_block(d, y, f'{plan.get("total_methods", 3)} methods total.')
             y = body_block(d, y + 40, ["Full post on lertechnotes", "→ link in bio"], bullet=False, fill=CYAN)
         p = out_dir / f"slide_{idx:02d}.png"
@@ -345,11 +362,15 @@ def assemble(slides: list[Path], audio: str, out_path: Path, ass_path: Path | No
         d = dur * factor
         n_frames = max(1, int(d * fps))
         clip = TMP / f"clip_{i:02d}.mp4"
+        # hook slide (i==0) zooms much faster — the standard rate takes ~1min to become
+        # visible, but viewers who bail do so at ~0:01; only the hook needs to read as
+        # "moving" within the first second
+        zoom_expr = "min(zoom+0.006,1.18)" if i == 0 else "min(zoom+0.0015,1.08)"
         subprocess.run([
             "ffmpeg", "-y", "-loop", "1", "-i", str(p), "-t", f"{d:.2f}",
             "-vf", f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
                    f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=#0a1628,"
-                   f"zoompan=z='min(zoom+0.0015,1.08)':d={n_frames}:s={W}x{H}:fps={fps}",
+                   f"zoompan=z='{zoom_expr}':d={n_frames}:s={W}x{H}:fps={fps}",
             "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p",
             str(clip),
         ], check=True, capture_output=True)
