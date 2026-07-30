@@ -70,17 +70,18 @@ def frontmatter(text: str) -> dict:
     return fm
 
 
-def find_post() -> Path | None:
+def find_posts() -> list[Path]:
     eligible = []
     for p in sorted(OUTPUTS.glob("*.md")):
         fm = frontmatter(p.read_text(encoding="utf-8", errors="replace"))
-        # PRD §1 "next unprocessed post": skip already-queued ones awaiting review
+        # PRD §1: skip already-queued ones awaiting review
         if (fm.get("tiktok-ready") == "true" and fm.get("published") != "true"
                 and fm.get("tiktok_queued") != "true"):
             # optional tiktok_order overrides date order (series rotation control)
             order = int(fm.get("tiktok_order", 9999))
             eligible.append(((order, fm.get("date", p.stem[:10])), p))
-    return min(eligible)[1] if eligible else None
+    eligible.sort(key=lambda t: t[0])
+    return [p for _, p in eligible]
 
 
 def slug_of(p: Path) -> str:
@@ -401,14 +402,7 @@ def update_frontmatter(note_path: Path, updates: dict) -> None:
 
 
 # ── main ────────────────────────────────────────────────────────────────
-def main() -> int:
-    dry = "--dry-run" in sys.argv
-    log(f"Scanning outputs/ for eligible posts...{' (dry-run)' if dry else ''}")
-    post = find_post()
-    if post is None:
-        log("No eligible post found. Done.")
-        return 0
-    log(f"Found: {post.name}")
+def process_post(post: Path, dry: bool) -> None:
     slug = slug_of(post)
     today = datetime.date.today().isoformat()
     out_mp4 = QUEUE / f"{slug}-{today}.mp4"
@@ -416,8 +410,7 @@ def main() -> int:
     if dry:
         log(f"Would: LLM-extract plan, TTS voiceover, 7 slides, ffmpeg -> {out_mp4}")
         log(f"Would: set tiktok_queued: true in {post.name}")
-        log("Done (dry-run).")
-        return 0
+        return
 
     body = post.read_text(encoding="utf-8", errors="replace")
     plan = llm_extract(body)
@@ -450,7 +443,20 @@ def main() -> int:
 
     update_frontmatter(post, {"tiktok_queued": "true", "tiktok_queued_date": today})
     log("Frontmatter updated: tiktok_queued: true")
-    log("Done.")
+
+
+def main() -> int:
+    dry = "--dry-run" in sys.argv
+    log(f"Scanning outputs/ for eligible posts...{' (dry-run)' if dry else ''}")
+    posts = find_posts()
+    if not posts:
+        log("No eligible posts found. Done.")
+        return 0
+    log(f"Found {len(posts)} eligible post(s): {', '.join(p.name for p in posts)}")
+    for i, post in enumerate(posts, 1):
+        log(f"Processing post {i} of {len(posts)}: {slug_of(post)}")
+        process_post(post, dry)
+    log("Done." if not dry else "Done (dry-run).")
     return 0
 
 
