@@ -405,7 +405,7 @@ def update_frontmatter(note_path: Path, updates: dict) -> None:
 def process_post(post: Path, dry: bool) -> None:
     slug = slug_of(post)
     today = datetime.date.today().isoformat()
-    out_mp4 = QUEUE / f"{slug}-{today}.mp4"
+    out_mp4 = QUEUE / f"{today}-{slug}.mp4"
 
     if dry:
         log(f"Would: LLM-extract plan, TTS voiceover, 7 slides, ffmpeg -> {out_mp4}")
@@ -437,7 +437,7 @@ def process_post(post: Path, dry: bool) -> None:
     assert size > 0, "output mp4 empty"
     log(f"Video written: TikTokQueue/{out_mp4.name} ({size // 1024}KB)")
 
-    meta_path = QUEUE / f"{slug}-{today}.txt"
+    meta_path = QUEUE / f"{today}-{slug}.txt"
     write_metadata(plan, meta_path)
     log(f"Metadata written: TikTokQueue/{meta_path.name}")
 
