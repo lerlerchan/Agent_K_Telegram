@@ -1,6 +1,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { buildSystemContext } = require('./memory');
 
 // File logger — writes to logs/activity/YYYY-MM-DD.log
@@ -15,14 +16,30 @@ function logToFile(level, msg) {
   } catch { /* ignore logging errors */ }
 }
 
+const LIGHTPANDA_BIN = process.env.LIGHTPANDA_BIN || path.join(os.homedir(), '.local', 'bin', 'lightpanda');
+
+// Interaction signals — these override the lightpanda default and force playwright
+const INTERACTION_PATTERNS = [
+  /\bclick\b/i, /\bfill\b/i, /\blog\s?in\b/i, /\bsign\s?in\b/i, /\bsubmit\b/i,
+  /\bcheckout\b/i, /\bform\b/i, /\bcheck.?in\b/i, /boarding pass/i,
+  /book (a )?(flight|hotel|ticket)/i, /\bnavigate\b.*\bclick\b/i,
+];
+
 // MCP server configs — only loaded when message matches keywords
 const MCP_SERVERS = {
   playwright: {
-    keywords: ['browse', 'website', 'webpage', 'search', 'google', 'screenshot', 'scrape', 'url', 'http', 'open page', 'navigate', 'check in', 'check-in', 'boarding pass', 'book flight', 'airline', 'playwright'],
+    keywords: ['screenshot', 'click', 'fill', 'login', 'log in', 'sign in', 'submit', 'checkout', 'form', 'check in', 'check-in', 'boarding pass', 'book flight', 'airline', 'playwright'],
     config: {
       command: 'npx',
       args: ['@playwright/mcp@latest', '--browser', 'chromium',
         ...(process.env.PLAYWRIGHT_CHROME_PATH ? ['--executable-path', process.env.PLAYWRIGHT_CHROME_PATH] : [])]
+    }
+  },
+  lightpanda: {
+    keywords: ['browse', 'website', 'webpage', 'scrape', 'url', 'http', 'open page', 'navigate', 'fetch', 'read page', 'top story', 'headline', 'pull link', 'dump', 'visit'],
+    config: {
+      command: LIGHTPANDA_BIN,
+      args: ['mcp']
     }
   },
   'chrome-devtools': {
@@ -56,7 +73,9 @@ function scoreMcpServer(server, tokens) {
   }, 0);
 }
 
-// Detect which MCP servers are needed based on scored token overlap
+// Detect which MCP servers are needed based on scored token overlap.
+// lightpanda is the default browsing backend (fast, low-memory); playwright
+// only wins when the message signals real interaction (click/fill/login/etc).
 function detectMcpServers(message) {
   const tokens = message.toLowerCase().match(/\w+/g) || [];
   const needed = {};
@@ -64,6 +83,11 @@ function detectMcpServers(message) {
     if (scoreMcpServer(server, tokens) > 0) {
       needed[name] = server.config;
     }
+  }
+  if (needed.lightpanda && needed.playwright) {
+    const interactive = INTERACTION_PATTERNS.some((p) => p.test(message));
+    if (interactive) delete needed.lightpanda;
+    else delete needed.playwright;
   }
   return needed;
 }
@@ -221,7 +245,7 @@ const MODEL_IDS = {
   opus:   'claude-opus-4-6',
 };
 
-const runClaude = (message, { onProgress, signal, modelOverride, maxTurns } = {}) => {
+const runClaudeAttempt = (message, { onProgress, signal, modelOverride, maxTurns } = {}, mcpServersOverride) => {
   return new Promise((resolve, reject) => {
     const cwd = process.env.WORKSPACE_DIR || process.cwd();
     const complex = isComplexTask(message);
@@ -231,8 +255,8 @@ const runClaude = (message, { onProgress, signal, modelOverride, maxTurns } = {}
     const turns = (maxTurns && Number.isInteger(maxTurns) && maxTurns > 0) ? maxTurns : 30;
     const args = ['-p', '--verbose', '--output-format', 'stream-json', '--dangerously-skip-permissions', '--model', modelId, '--max-turns', String(turns)];
 
-    // Smart MCP: only load servers matching the message
-    const mcpServers = detectMcpServers(message);
+    // Smart MCP: only load servers matching the message (or the retry override)
+    const mcpServers = mcpServersOverride || detectMcpServers(message);
     const serverCount = Object.keys(mcpServers).length;
 
     if (serverCount > 0) {
@@ -415,10 +439,10 @@ const runClaude = (message, { onProgress, signal, modelOverride, maxTurns } = {}
           const denied = resultEvent.permission_denials?.map(d => d.tool_name).join(', ');
           const fallback = denied ? `⚠️ Claude couldn't complete — permission denied for: ${denied}` : '⚠️ Claude returned an empty response. Try again.';
           logToFile('WARN', `Empty response. Denied tools: ${denied || 'none'}. Session: ${resultEvent.session_id || 'none'}`);
-          resolve({ response: fallback + tokenFooter, sessionId: resultEvent.session_id || null });
+          resolve({ response: fallback + tokenFooter, sessionId: resultEvent.session_id || null, emptyOrError: true });
         } else {
           logToFile('OK', `Response: ${text.length} chars | Session: ${resultEvent.session_id || 'none'}`);
-          resolve({ response: text + tokenFooter, sessionId: resultEvent.session_id || null });
+          resolve({ response: text + tokenFooter, sessionId: resultEvent.session_id || null, emptyOrError: !!resultEvent.is_error });
         }
       } else {
         // Fallback: try to parse the last line of stdout as JSON
@@ -428,10 +452,10 @@ const runClaude = (message, { onProgress, signal, modelOverride, maxTurns } = {}
           const r = JSON.parse(lastLine);
           const text = r.result || r.message || r.text || '';
           logToFile('WARN', `No result event, parsed last line: ${text.length} chars`);
-          resolve({ response: text || 'Done', sessionId: r.session_id || null });
+          resolve({ response: text || 'Done', sessionId: r.session_id || null, emptyOrError: !text });
         } catch {
           logToFile('WARN', `No result event, no parseable JSON. Raw stdout: ${stdout.length} chars`);
-          resolve({ response: stdout.trim() || 'Done', sessionId: null });
+          resolve({ response: stdout.trim() || 'Done', sessionId: null, emptyOrError: !stdout.trim() });
         }
       }
     });
@@ -442,5 +466,19 @@ const runClaude = (message, { onProgress, signal, modelOverride, maxTurns } = {}
     });
   });
 };
+
+// If a lightpanda-only browsing run comes back empty/errored, retry once with playwright.
+async function runClaude(message, opts = {}) {
+  const mcpServers = detectMcpServers(message);
+  const result = await runClaudeAttempt(message, opts, mcpServers);
+
+  const lightpandaOnly = mcpServers.lightpanda && Object.keys(mcpServers).length === 1;
+  if (lightpandaOnly && result.emptyOrError) {
+    logToFile('WARN', 'Lightpanda returned empty/errored — retrying with playwright');
+    const fallbackServers = { playwright: MCP_SERVERS.playwright.config };
+    return runClaudeAttempt(message, opts, fallbackServers);
+  }
+  return result;
+}
 
 module.exports = { runClaude, isComplexTask, detectMcpServers, shouldUseOllama };
