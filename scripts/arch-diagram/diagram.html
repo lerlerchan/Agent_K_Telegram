@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #0a1628;
+    --grid: #142841;
+    --cyan: #00b4d8;
+    --gold: #ffc832;
+    --white: #ffffff;
+    --grey: #8494a6;
+    --violet: #a78bfa;
+    --green: #34d399;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1080px; height: 1920px;
+    background: var(--bg);
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 60px 60px;
+    font-family: "DejaVu Sans", sans-serif;
+    color: var(--white);
+    overflow: hidden;
+    position: relative;
+  }
+
+  .chrome-top {
+    position: absolute; top: 46px; left: 60px; right: 60px;
+    display: flex; justify-content: space-between;
+    font-family: "DejaVu Sans Mono", monospace; font-size: 26px;
+  }
+  .chrome-top .series { color: var(--gold); letter-spacing: 2px; }
+  .chrome-top .brand { color: var(--grey); }
+
+  h1 {
+    position: absolute; top: 120px; left: 60px; right: 60px;
+    font-size: 76px; font-weight: bold; line-height: 1.05;
+    letter-spacing: -1px;
+  }
+  h1 .accent { color: var(--cyan); }
+  .subtitle {
+    position: absolute; top: 290px; left: 60px;
+    font-size: 34px; color: var(--grey);
+  }
+
+  .stack {
+    position: absolute; top: 380px; left: 60px; right: 60px;
+    display: flex; flex-direction: column; align-items: stretch;
+  }
+
+  /* ---- layer group ---- */
+  .layer {
+    border: 2px solid var(--grid);
+    border-radius: 22px;
+    padding: 26px 24px 24px;
+    background: rgba(20, 40, 65, .30);
+    opacity: 0;
+  }
+  .layer-title {
+    text-align: center;
+    font-size: 27px; font-weight: bold; letter-spacing: 3px;
+    margin-bottom: 20px;
+  }
+  .row { display: flex; gap: 18px; }
+
+  .box {
+    flex: 1;
+    border: 2px solid var(--grid);
+    border-radius: 16px;
+    background: rgba(10, 22, 40, .92);
+    padding: 22px 24px;
+    display: flex; align-items: center; gap: 18px;
+    opacity: 0;
+  }
+  .glyph {
+    width: 58px; height: 58px; flex: 0 0 58px;
+    display: grid; place-items: center;
+    font-size: 34px; line-height: 1;
+  }
+  .box .name { font-size: 33px; font-weight: bold; line-height: 1.15; }
+  .box .desc { font-size: 24px; color: var(--grey); margin-top: 4px; }
+
+  /* connector arrows */
+  .arrow { height: 62px; display: grid; place-items: center; }
+  .arrow svg { overflow: visible; }
+  .arrow path, .arrow line {
+    stroke-dasharray: 100; stroke-dashoffset: 100;
+  }
+
+  .c-cyan   { color: var(--cyan); }
+  .c-gold   { color: var(--gold); }
+  .c-violet { color: var(--violet); }
+  .c-green  { color: var(--green); }
+
+  /* ---------- animations ---------- */
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(26px) scale(.985); }
+    to   { opacity: 1; transform: translateY(0)    scale(1); }
+  }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  @keyframes titleIn {
+    from { opacity: 0; transform: translateY(-18px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  h1, .subtitle, .chrome-top { opacity: 0; animation: titleIn .7s ease-out forwards; }
+  .chrome-top { animation-delay: .05s; }
+  h1          { animation-delay: .15s; }
+  .subtitle   { animation-delay: .45s; }
+
+  .layer { animation: rise .75s cubic-bezier(.22,.9,.3,1) forwards; }
+  .box   { animation: rise .6s  cubic-bezier(.22,.9,.3,1) forwards; }
+  .arrow path, .arrow line { animation: draw .45s ease-out forwards; }
+</style>
+</head>
+<body>
+
+<div class="chrome-top">
+  <div class="series">HOW IT WORKS</div>
+  <div class="brand">lertechnotes</div>
+</div>
+
+<h1>The <span class="accent">TikTok pipeline</span><br>that runs itself</h1>
+<div class="subtitle">Obsidian note → posted video · zero clicks</div>
+
+<div class="stack">
+
+  <!-- 1 SOURCE -->
+  <div class="layer" style="animation-delay:0.9s">
+    <div class="layer-title c-gold">— SOURCE —</div>
+    <div class="row">
+      <div class="box" style="animation-delay:1.15s">
+        <div class="glyph c-gold">◆</div>
+        <div>
+          <div class="name">Obsidian Vault</div>
+          <div class="desc">notes tagged tiktok-ready</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><svg width="26" height="62">
+    <line x1="13" y1="0" x2="13" y2="46" stroke="#ffc832" stroke-width="3" style="animation-delay:4.84s"/>
+    <path d="M4,40 L13,54 L22,40" fill="none" stroke="#ffc832" stroke-width="3" stroke-linecap="round" style="animation-delay:4.99s"/>
+  </svg></div>
+
+  <!-- 2 SCRIPT -->
+  <div class="layer" style="animation-delay:5.39s">
+    <div class="layer-title c-cyan">— SCRIPT LAYER —</div>
+    <div class="row">
+      <div class="box" style="animation-delay:5.64s">
+        <div class="glyph c-cyan">✦</div>
+        <div>
+          <div class="name">DeepSeek</div>
+          <div class="desc">hook + 3 methods + voiceover</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><svg width="26" height="62">
+    <line x1="13" y1="0" x2="13" y2="46" stroke="#00b4d8" stroke-width="3" style="animation-delay:8.16s"/>
+    <path d="M4,40 L13,54 L22,40" fill="none" stroke="#00b4d8" stroke-width="3" stroke-linecap="round" style="animation-delay:8.31s"/>
+  </svg></div>
+
+  <!-- 3 VOICE -->
+  <div class="layer" style="animation-delay:8.71s">
+    <div class="layer-title c-violet">— VOICE LAYER —</div>
+    <div class="row">
+      <div class="box" style="animation-delay:8.96s">
+        <div class="glyph c-violet">♪</div>
+        <div>
+          <div class="name">edge-tts</div>
+          <div class="desc">voiceover</div>
+        </div>
+      </div>
+      <div class="box" style="animation-delay:9.16s">
+        <div class="glyph c-violet">⟐</div>
+        <div>
+          <div class="name">whisper</div>
+          <div class="desc">word timings</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><svg width="26" height="62">
+    <line x1="13" y1="0" x2="13" y2="46" stroke="#a78bfa" stroke-width="3" style="animation-delay:13.43s"/>
+    <path d="M4,40 L13,54 L22,40" fill="none" stroke="#a78bfa" stroke-width="3" stroke-linecap="round" style="animation-delay:13.58s"/>
+  </svg></div>
+
+  <!-- 4 RENDER -->
+  <div class="layer" style="animation-delay:13.98s">
+    <div class="layer-title c-green">— RENDER LAYER —</div>
+    <div class="row">
+      <div class="box" style="animation-delay:14.23s">
+        <div class="glyph c-green">▣</div>
+        <div>
+          <div class="name">Pillow</div>
+          <div class="desc">7 slides</div>
+        </div>
+      </div>
+      <div class="box" style="animation-delay:14.43s">
+        <div class="glyph c-green">▶</div>
+        <div>
+          <div class="name">FFmpeg</div>
+          <div class="desc">motion + captions</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><svg width="26" height="62">
+    <line x1="13" y1="0" x2="13" y2="46" stroke="#34d399" stroke-width="3" style="animation-delay:19.23s"/>
+    <path d="M4,40 L13,54 L22,40" fill="none" stroke="#34d399" stroke-width="3" stroke-linecap="round" style="animation-delay:19.38s"/>
+  </svg></div>
+
+  <!-- 5 OUTPUT -->
+  <div class="layer" style="animation-delay:19.78s; border-color:#00b4d8">
+    <div class="layer-title c-cyan">— OUTPUT —</div>
+    <div class="row">
+      <div class="box" style="animation-delay:20.03s; border-color:#1e4a63">
+        <div class="glyph c-cyan">↗</div>
+        <div>
+          <div class="name">TikTokQueue</div>
+          <div class="desc">synced · ready to post</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
