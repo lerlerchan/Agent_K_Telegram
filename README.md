@@ -99,6 +99,41 @@ npm start
 pm2 start start.sh --name staff-bot
 ```
 
+## Automation Scripts
+
+`scripts/` holds standalone automation that shares this repo's vault and `.env`
+but runs independently of the bot — most of it on cron (times are Asia/Kuala_Lumpur).
+
+| Script | Schedule | What it does |
+|--------|----------|--------------|
+| `generate-tiktok.py` | Sun 12:03 | Batch-renders every `outputs/` post tagged `tiktok-ready` into a 1080×1920 MP4 (LLM script → TTS → word-level captions → slides → FFmpeg) and drops it in `TikTokQueue/` for review |
+| `generate-wordpress-post.js` | Tue & Thu 10:00 | Drafts WordPress posts |
+| `generate-finance-article.js` | Thu 01:00 | Drafts finance articles |
+| `sync-linkedin-wiki.js` | Tue 16:00 | Syncs wiki content to LinkedIn |
+| `vault-maintenance.js` | daily 19:00 | Vault housekeeping |
+| `arrange-*.js` | weekly | Sorts inbox notes by topic (github / manga / metaphysics) |
+| `arch-diagram/` | manual | Renders animated architecture-diagram videos (see below) |
+
+### Animated architecture diagrams
+
+`scripts/arch-diagram/` renders the sequential-reveal diagram videos common on
+tech Reels — boxes fade in one at a time, arrows draw between them.
+
+Plain CSS keyframes staggered by `animation-delay`; Playwright pauses every
+animation and steps `currentTime` frame by frame via the Web Animations API, so
+output is deterministic rather than a wall-clock screen capture.
+
+```bash
+python3 scripts/arch-diagram/render.py     # silent clip
+```
+
+For a voiced version, `add_voice.py` synthesises the narration (edge-tts, same
+voice as the TikTok pipeline), measures each line, and prints the
+`animation-delay` values the diagram should use — the narration drives the
+timing, not the other way round. Full workflow is in `render.py`'s docstring.
+
+Requires `playwright` (with Chromium), `edge-tts`, and `ffmpeg`.
+
 ## Usage
 
 | Telegram command | What it does |
