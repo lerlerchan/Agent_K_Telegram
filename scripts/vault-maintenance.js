@@ -202,6 +202,10 @@ function taskRename(files) {
     // Preserve date prefix if present
     const datePrefix = base.match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
     const newName = datePrefix ? `${datePrefix}-${newSlug}` : newSlug;
+    // Already named for its content (maybe with a -N dedupe suffix): renaming would only
+    // swap it to newName-2 and back, forever.
+    const cur = base.replace(/\.md$/, '');
+    if (cur === newName || new RegExp('^' + newName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '-\\d+$').test(cur)) continue;
     const newPath = uniquePath(path.dirname(filePath), newName);
 
     if (!DRY_RUN) fs.renameSync(filePath, newPath);
@@ -221,8 +225,8 @@ const CLUSTER_MAP = [
   { topic: 'fengshui',   keywords: /風水|fengshui|feng.?shui|財位|煞氣/i,                 folder: '02-knowledge/fengshui' },
   { topic: 'manga',      keywords: /\b(manga|manhwa|manhua|webtoon)\b|漫画|漫畫|만화|isekai|shounen|shoujo|seinen|xianxia|wuxia|cultivation/i, folder: '02-knowledge/manga' },
   { topic: 'github-repo',keywords: /github\.com\/[^/]+\/[^/\s]+/i,                       folder: '04-resources/github' },
-  { topic: 'ai-tools',   keywords: /\bllm\b|claude|openai|gemini|anthropic|gpt/i,        folder: null },
-  { topic: 'teaching',   keywords: /course|lecture|student|tutorial|workshop|training/i,  folder: '03-teaching' },
+  { topic: 'ai-tools',   keywords: /\bllm\b|claude|openai|gemini|anthropic|gpt/i,        folder: '02-knowledge/ai-tools' },
+  { topic: 'teaching',   keywords: /course|lecture|student|tutorial|workshop|training/i,  folder: '03-teaching/misc' },
 ];
 
 function detectCluster(content, fm) {
@@ -242,9 +246,12 @@ function taskCluster(files) {
     const content  = fs.readFileSync(filePath, 'utf8');
     const { fm, body } = parseFM(content);
     const existingCluster = getFMField(fm, 'cluster');
-    if (existingCluster) continue; // already clustered
-
-    const rule = detectCluster(content, fm);
+    const inboxNote = filePath.startsWith(path.join(VAULT, '00-inbox'));
+    // Already clustered: only backfill the move for inbox notes whose cluster has a folder
+    // (ai-tools notes were tagged for weeks while the rule had folder:null).
+    const rule = existingCluster
+      ? (inboxNote ? CLUSTER_MAP.find(r => r.topic === existingCluster && r.folder) : null)
+      : detectCluster(content, fm);
     if (!rule) continue;
 
     let newFm = fm || '';
@@ -400,7 +407,12 @@ function taskWeeklyTag(files) {
     const lertechnotes  = channelScore(fullText, LERTECHNOTES_KW);
     const lerdestiny    = channelScore(fullText, LERDESTINY_KW);
     const lertravel     = channelScore(fullText, LERTRAVEL_KW);
-    const status        = inferStatus(body, fm);
+    const existingStatus = getFMField(fm, 'status');
+    // 2026-08-19: convert-inbox.js sets status=needs-manual-review to skip permanently-stuck
+    // inbox notes (no url / js-app url / thin body); this loop overwrote it every day before
+    // convert-inbox even ran, so the same dead files got reprocessed daily instead of excluded.
+    // Preserve the manual-review marker until a human clears it.
+    const status = existingStatus === 'needs-manual-review' ? existingStatus : inferStatus(body, fm);
     const title         = inferTitle(content, fm);
     const tags          = inferTags(fullText, fm);
 
